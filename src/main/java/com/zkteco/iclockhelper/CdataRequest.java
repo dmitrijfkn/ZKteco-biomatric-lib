@@ -3,7 +3,7 @@ package com.zkteco.iclockhelper;
 import java.util.Map;
 
 import com.sun.net.httpserver.HttpExchange;
-import com.zkteco.Enum.TableEnum;
+import com.zkteco.enums.TableEnum;
 
 import java.io.BufferedReader;
 import java.io.IOException;

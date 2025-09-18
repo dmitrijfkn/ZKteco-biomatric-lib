@@ -3,7 +3,7 @@ package com.zkteco.commands;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-import com.zkteco.Enum.CommandCodeEnum;
+import com.zkteco.enums.CommandCodeEnum;
 import com.zkteco.utils.SecurityUtils;
 
 public class ZKCommand {

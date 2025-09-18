@@ -1,5 +1,14 @@
 package com.zkteco.terminal;
 
+import com.zkteco.enums.*;
+import com.zkteco.Exception.DeviceNotConnectException;
+import com.zkteco.command.events.EventCode;
+import com.zkteco.commands.*;
+import com.zkteco.utils.HexUtils;
+import com.zkteco.utils.SecurityUtils;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -8,7 +17,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
-import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -19,38 +27,14 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.io.FileWriter;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-
-import org.apache.commons.lang3.StringUtils;
-
-import com.zkteco.Enum.OnOffenum;
-import com.zkteco.Exception.DeviceNotConnectException;
-import com.zkteco.command.events.EventCode;
-import com.zkteco.commands.AttendanceRecord;
-import com.zkteco.Enum.AttendanceStateEnum;
-import com.zkteco.Enum.AttendanceTypeEnum;
-import com.zkteco.Enum.CommandCodeEnum;
-import com.zkteco.Enum.CommandReplyCodeEnum;
-import com.zkteco.commands.GetTimeReply;
-import com.zkteco.commands.SmsInfo;
-import com.zkteco.commands.UserInfo;
-import com.zkteco.Enum.UserRoleEnum;
-import com.zkteco.commands.ZKCommand;
-import com.zkteco.commands.ZKCommandReply;
-import com.zkteco.utils.HexUtils;
-import com.zkteco.utils.SecurityUtils;
-
+@Slf4j
 public class ZKTerminal {
-    
-    private DatagramSocket socket;
-    private InetAddress address;
 
     private final String ip;
     private final int port;
-
+    private DatagramSocket socket;
+    private InetAddress address;
     private int sessionId;
     private int replyNo;
 
@@ -62,14 +46,15 @@ public class ZKTerminal {
     // Connect to devices
     public ZKCommandReply connect() throws IOException, DeviceNotConnectException {
         if (!testPing()) {
-            throw new DeviceNotConnectException("Device Not connect...!" );
+            throw new DeviceNotConnectException("Device Not connect...!");
         }
         sessionId = 0;
         replyNo = 0;
-        socket = new DatagramSocket(port);
+        socket = new DatagramSocket(0);
+        socket.setSoTimeout(10 * 1000);
         address = InetAddress.getByName(ip);
 //        socket.setSoTimeout(1000);
-        
+
         int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_CONNECT, sessionId, replyNo, null);
         byte[] buf = new byte[toSend.length];
         int index = 0;
@@ -89,7 +74,7 @@ public class ZKTerminal {
         System.arraycopy(response, 8, payloads, 0, payloads.length);
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
-    
+
     // Test devices connect or not
     public boolean testPing() {
         try {
@@ -106,10 +91,10 @@ public class ZKTerminal {
             return false;
         }
     }
-    
+
     // Disconnect Devices to this Application
     public void disconnect() throws IOException {
-         int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_EXIT, sessionId, replyNo, null);
+        int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_EXIT, sessionId, replyNo, null);
         byte[] buf = new byte[toSend.length];
         int index = 0;
 
@@ -127,7 +112,7 @@ public class ZKTerminal {
             socket.close();
         }
     }
-    
+
     // Enable devices
     public ZKCommandReply enableDevice() throws IOException {
         int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_ENABLEDEVICE, sessionId, replyNo, null);
@@ -147,7 +132,7 @@ public class ZKTerminal {
         System.arraycopy(response, 8, payloads, 0, payloads.length);
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
-    
+
     // disable devices
     public ZKCommandReply disableDevice() throws IOException {
         int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_DISABLEDEVICE, sessionId, replyNo, null);
@@ -190,7 +175,7 @@ public class ZKTerminal {
     }
 
     // Set Realtime
-    public ZKCommandReply enableRealtime(EventCode ... events) throws IOException {
+    public ZKCommandReply enableRealtime(EventCode... events) throws IOException {
         int allEvents = 0;
         for (EventCode event : events) {
             allEvents = allEvents | event.getCode();
@@ -220,7 +205,7 @@ public class ZKTerminal {
         System.arraycopy(response, 8, payloads, 0, payloads.length);
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
-    
+
     // Get realtime Attendance log But other method not able to access(Address already in use)
     public ZKCommandReply enableRealtimeAtt() throws IOException, ParseException {
         int allEvents = EventCode.EF_ATTLOG.getCode();
@@ -243,13 +228,12 @@ public class ZKTerminal {
         socket.send(packet);
         int[] response = readResponse();
         CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
-        
+
         int replyId = response[6] + (response[7] * 0x100);
         int[] payloads = new int[response.length - 8];
         System.arraycopy(response, 8, payloads, 0, payloads.length);
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
-
 
     // Devices Power down
     public ZKCommandReply Poweroff() throws IOException, ParseException {
@@ -260,23 +244,23 @@ public class ZKTerminal {
             buf[index++] = (byte) byteToSend;
         }
 
-        DatagramPacket packet = new DatagramPacket(buf, buf.length,address, port);
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
         socket.send(packet);
         replyNo++;
 
-          int[] response = readResponse();
-          CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+        int[] response = readResponse();
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
 
-          if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
+        if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
 //              boolean first = true;
-          }
-          socket.close();
-          int replyId = response[6] + (response[7] * 0x100);
-          int[] payloads = new int[response.length - 8];
-          System.arraycopy(response, 8, payloads, 0, payloads.length);
-          return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
+        }
+        socket.close();
+        int replyId = response[6] + (response[7] * 0x100);
+        int[] payloads = new int[response.length - 8];
+        System.arraycopy(response, 8, payloads, 0, payloads.length);
+        return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
-    
+
     // Restart Devices
     public ZKCommandReply restart() throws IOException, ParseException {
         int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_RESTART, sessionId, replyNo, null);
@@ -285,7 +269,7 @@ public class ZKTerminal {
         for (int byteToSend : toSend) {
             buf[index++] = (byte) byteToSend;
         }
-        DatagramPacket packet = new DatagramPacket(buf, buf.length,address, port);
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
         socket.send(packet);
         replyNo++;
         int[] response = readResponse();
@@ -343,7 +327,7 @@ public class ZKTerminal {
 
         String attendance = attendanceBuffer.toString();
 
-        while (attendance.length() > 0) {
+        while (attendance.length() >= 80) {
             String record = attendance.substring(0, 80);
 
             int seq = Integer.valueOf(record.substring(2, 4) + record.substring(0, 2), 16);
@@ -363,7 +347,9 @@ public class ZKTerminal {
             record = record.substring(48);
 
             int method = Integer.valueOf(record.substring(0, 2), 16);
-            AttendanceTypeEnum attendanceType = AttendanceTypeEnum.values()[method];
+            AttendanceTypeEnum attendanceType = method < AttendanceTypeEnum.values().length
+                    ? AttendanceTypeEnum.values()[method]
+                    : AttendanceTypeEnum.UNKNOWN;
 
             record = record.substring(2);
 
@@ -383,94 +369,11 @@ public class ZKTerminal {
             AttendanceRecord attendanceRecord = new AttendanceRecord(seq, userId.trim(), attendanceType, attendanceDate, attendanceState);
             attendanceRecords.add(attendanceRecord);
         }
-        return attendanceRecords;
-    }
 
-    public List<AttendanceRecord> getAttendanceRecordsForDateRange(String startTime,String endTime) throws IOException, ParseException {
-        int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_ATTLOG_RRQ, sessionId, replyNo, null);
-        byte[] buf = new byte[toSend.length];
-        int index = 0;
-
-        for (int byteToSend : toSend) {
-            buf[index++] = (byte) byteToSend;
+        if (!attendance.isEmpty()) {
+            log.warn("Unparsed attendance tail from {}: [{} chars] → {} , it will be loaded on the next startup", address.getHostAddress(), attendance.length(), attendance);
         }
 
-        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
-        socket.send(packet);
-        replyNo++;
-        int[] response = readResponse();
-        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
-        List<AttendanceRecord> attendanceRecords = new ArrayList<>();
-        StringBuilder attendanceBuffer = new StringBuilder();
-
-        if (replyCode == CommandReplyCodeEnum.CMD_PREPARE_DATA) {
-            boolean first = true;
-
-            int lastDataRead;
-
-            do {
-                int[] readData = readResponse();
-
-                lastDataRead = readData.length;
-
-                String readPacket = HexUtils.bytesToHex(readData);
-
-                attendanceBuffer.append(readPacket.substring(first ? 24 : 16));
-
-                first = false;
-            } while (lastDataRead == 1032);
-        } else {
-            attendanceBuffer.append(HexUtils.bytesToHex(response).substring(24));
-        }
-
-        String attendance = attendanceBuffer.toString();
-
-        while (attendance.length() > 0) {
-            String record = attendance.substring(0, 80);
-
-            int seq = Integer.valueOf(record.substring(2, 4) + record.substring(0, 2), 16);
-
-            record = record.substring(4);
-
-            String userId = Character.toString((char) Integer.valueOf(record.substring(0, 2), 16).intValue())
-                    + Character.toString((char) Integer.valueOf(record.substring(2, 4), 16).intValue())
-                    + Character.toString((char) Integer.valueOf(record.substring(4, 6), 16).intValue())
-                    + Character.toString((char) Integer.valueOf(record.substring(6, 8), 16).intValue())
-                    + Character.toString((char) Integer.valueOf(record.substring(8, 10), 16).intValue())
-                    + Character.toString((char) Integer.valueOf(record.substring(10, 12), 16).intValue())
-                    + Character.toString((char) Integer.valueOf(record.substring(12, 14), 16).intValue())
-                    + Character.toString((char) Integer.valueOf(record.substring(14, 16), 16).intValue())
-                    + Character.toString((char) Integer.valueOf(record.substring(16, 18), 16).intValue());
-
-            record = record.substring(48);
-
-            int method = Integer.valueOf(record.substring(0, 2), 16);
-            AttendanceTypeEnum attendanceType = AttendanceTypeEnum.values()[method];
-
-            record = record.substring(2);
-
-            long encDate = Integer.valueOf(record.substring(6, 8), 16) * 0x1000000L
-                    + (Integer.valueOf(record.substring(4, 6), 16) * 0x10000L)
-                    + (Integer.valueOf(record.substring(2, 4), 16) * 0x100L)
-                    + (Integer.valueOf(record.substring(0, 2), 16));
-
-            Date attendanceDate = HexUtils.extractDate(encDate);
-
-            record = record.substring(8);
-
-            int operation = Integer.valueOf(record.substring(0, 2), 16);
-            AttendanceStateEnum attendanceState = AttendanceStateEnum.values()[operation];
-
-            attendance = attendance.substring(80);
-            AttendanceRecord attendanceRecord = new AttendanceRecord(seq, userId.trim(), attendanceType, attendanceDate, attendanceState);
-            SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-            Date startDate = dateFormat.parse(startTime);
-            Date endDate = dateFormat.parse(endTime);
-
-            if (attendanceDate.after(startDate) && attendanceDate.before(endDate)) {
-                attendanceRecords.add(attendanceRecord);
-            }
-        }
         return attendanceRecords;
     }
 
@@ -482,7 +385,7 @@ public class ZKTerminal {
         for (int byteToSend : toSend) {
             buf[index++] = (byte) byteToSend;
         }
-        DatagramPacket packet = new DatagramPacket(buf, buf.length,address, port);
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
         socket.send(packet);
         replyNo++;
         int[] response = readResponse();
@@ -491,7 +394,7 @@ public class ZKTerminal {
         if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
 //             boolean first = true;
         }
-          
+
         int replyId = response[6] + (response[7] * 0x100);
         int[] payloads = new int[response.length - 8];
         System.arraycopy(response, 8, payloads, 0, payloads.length);
@@ -506,7 +409,7 @@ public class ZKTerminal {
             buf[index++] = (byte) byteToSend;
         }
 
-        DatagramPacket packet = new DatagramPacket(buf, buf.length,address, port);
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
         socket.send(packet);
         replyNo++;
 
@@ -531,7 +434,7 @@ public class ZKTerminal {
             buf[index++] = (byte) byteToSend;
         }
 
-        DatagramPacket packet = new DatagramPacket(buf, buf.length,address, port);
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
         socket.send(packet);
         replyNo++;
 
@@ -557,7 +460,7 @@ public class ZKTerminal {
         for (int byteToSend : toSend) {
             buf[index++] = (byte) byteToSend;
         }
-        DatagramPacket packet = new DatagramPacket(buf, buf.length,address, port);
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
         socket.send(packet);
         replyNo++;
         int[] response = readResponse();
@@ -566,7 +469,7 @@ public class ZKTerminal {
         if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
 //             boolean first = true;
         }
-          
+
         int replyId = response[6] + (response[7] * 0x100);
         int[] payloads = new int[response.length - 8];
         System.arraycopy(response, 8, payloads, 0, payloads.length);
@@ -609,7 +512,7 @@ public class ZKTerminal {
 
     // Get device FirmVerion
     public String getFirmwareVersion() throws IOException {
-        int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_GET_VERSION, sessionId, replyNo,null);
+        int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_GET_VERSION, sessionId, replyNo, null);
         byte[] buf = new byte[toSend.length];
         int index = 0;
 
@@ -771,7 +674,7 @@ public class ZKTerminal {
         }
         return "";
     }
-    
+
     //
     public String getDeviceIP() throws IOException {
         int[] toSend = ZKCommand.getPacketByte(CommandCodeEnum.CMD_OPTIONS_RRQ, sessionId, replyNo, "IPAddress".getBytes());
@@ -804,7 +707,7 @@ public class ZKTerminal {
         }
         return "";
     }
-    
+
     // Get TCP port from device
     public String getDevicePORT() throws IOException {
         int[] toSend = ZKCommand.getPacketByte(CommandCodeEnum.CMD_OPTIONS_RRQ, sessionId, replyNo, "UDPPort".getBytes());
@@ -1217,12 +1120,12 @@ public class ZKTerminal {
 
         // TODO:
         if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
-            
+
         }
 
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
-    
+
     // set Communication key
     public ZKCommandReply setCommKey(int key) throws IOException {
         byte[] COMKeybyte = ("COMKey=" + key).getBytes();
@@ -1245,13 +1148,13 @@ public class ZKTerminal {
 
         // TODO:
         if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
-            
+
         }
 
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
 
-    
+
     // set on off device voice
     public ZKCommandReply setVoiceOnOff(OnOffenum state) throws IOException {
         byte[] voiceOn = ("VoiceOn=" + state.getOnOffState()).getBytes();
@@ -1274,7 +1177,7 @@ public class ZKTerminal {
 
         // TODO:
         if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
-            
+
         }
 
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
@@ -1302,12 +1205,12 @@ public class ZKTerminal {
 
         // TODO:
         if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
-            
+
         }
 
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
-    }   
-    
+    }
+
     // get platform name
     public String getPlatform() throws IOException {
         int[] toSend = ZKCommand.getPacketByte(CommandCodeEnum.CMD_OPTIONS_RRQ, sessionId, replyNo, "~Platform".getBytes());
@@ -1369,7 +1272,6 @@ public class ZKTerminal {
 
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
-
 
 
     // wrong working i think
@@ -1599,7 +1501,7 @@ public class ZKTerminal {
                 return responseParts[1].split("\0")[0];
             }
         }
-        return "";    
+        return "";
     }
 
     // get Device MAC address
@@ -1635,7 +1537,7 @@ public class ZKTerminal {
             }
         }
 
-        return "";    
+        return "";
     }
 
     // Device Fingerprint Version
@@ -1671,9 +1573,9 @@ public class ZKTerminal {
             }
         }
 
-        return "";    
-      }    
-    
+        return "";
+    }
+
     // get fingerprint version
     public int getFPVersion() throws IOException {
         int[] toSend = ZKCommand.getPacketByte(CommandCodeEnum.CMD_OPTIONS_RRQ, sessionId, replyNo, "~ZKFPVersion".getBytes());
@@ -1694,7 +1596,7 @@ public class ZKTerminal {
             for (int i = 0; i < byteResponse.length; i++) {
                 byteResponse[i] = (byte) response[i + 8];
             }
-            
+
             String responseString = new String(byteResponse, StandardCharsets.US_ASCII);
             String[] responseParts = responseString.split("=", 2);
 
@@ -1706,9 +1608,9 @@ public class ZKTerminal {
                 }
             }
         }
-        return 0;    
+        return 0;
     }
-    
+
     // Device OEM name
     public String getOEMVendor() throws IOException {
         int[] toSend = ZKCommand.getPacketByte(CommandCodeEnum.CMD_OPTIONS_RRQ, sessionId, replyNo, "~OEMVendor".getBytes());
@@ -1743,13 +1645,11 @@ public class ZKTerminal {
         return "";
     }
 
-    
-    
- // Get Devices All users Data
+    // Get Devices All users Data
     public List<UserInfo> getAllUsers() throws IOException, ParseException {
         try {
             int usercount = getDeviceStatus().get("userCount");
-            if(usercount==0)
+            if (usercount == 0)
                 return Collections.emptyList();
             int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_USERTEMP_RRQ, sessionId, replyNo, null);
             byte[] buf = new byte[toSend.length];
@@ -1786,7 +1686,7 @@ public class ZKTerminal {
 
                 while (buffer.remaining() >= 72) {
                     ByteBuffer userBuffer1 = ByteBuffer.allocate(72);
-                    buffer.get(userBuffer1.array()); 
+                    buffer.get(userBuffer1.array());
                     UserInfo user = UserInfo.encodeUser(userBuffer1, 72);
                     userList.add(user);
                 }
@@ -1801,11 +1701,11 @@ public class ZKTerminal {
             System.arraycopy(response, 8, payloads, 0, payloads.length);
 
             return userList;
-            
+
         } finally {
 
         }
-        
+
     }
 
     // Get work code
@@ -1830,7 +1730,7 @@ public class ZKTerminal {
             for (int i = 0; i < byteResponse.length; i++) {
                 byteResponse[i] = (byte) response[i + 8];
             }
-            
+
             String responseString = new String(byteResponse, StandardCharsets.US_ASCII);
             String[] responseParts = responseString.split("=", 2);
 
@@ -1839,25 +1739,25 @@ public class ZKTerminal {
             }
         }
 
-        return false; 
+        return false;
     }
-  
-    
+
+
     // Get devices capacity
     public Map<String, Integer> getDeviceStatus() throws IOException {
-        
+
         int[] toSend = ZKCommand.getPacketByte(CommandCodeEnum.CMD_GET_FREE_SIZES, sessionId, replyNo, null);
         byte[] buf = new byte[toSend.length];
         int index = 0;
-    
+
         for (int byteToSend : toSend) {
             buf[index++] = (byte) byteToSend;
         }
-    
+
         DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
         socket.send(packet);
         replyNo++;
-    
+
         int[] response = readResponse();
         CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
 
@@ -1887,16 +1787,16 @@ public class ZKTerminal {
                 statusMap.put("remainingAttlog", Integer.reverseBytes(buffer.getInt(76)));
                 statusMap.put("faceCount", Integer.reverseBytes(buffer.getInt(80)));
                 statusMap.put("faceCapacity", Integer.reverseBytes(buffer.getInt(88)));
-                
+
                 return statusMap;
 
-            } 
+            }
 
         }
         return Collections.emptyMap();
     }
-    
-    
+
+
     // Ensure the machine to be at the authentication (Not verify)
     public ZKCommandReply setStartVerify() throws IOException {
         int[] toSend = ZKCommand.getPacketByte(CommandCodeEnum.CMD_STARTVERIFY, sessionId, replyNo, null);
@@ -1918,14 +1818,13 @@ public class ZKTerminal {
 
         // TODO:
         if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
-            
+
         }
 
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
-    
 
-    
+
     // Get Devices Date And Time
     public Date getDeviceTime() throws IOException, ParseException {
         int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_GET_TIME, sessionId, replyNo, null);
@@ -1970,7 +1869,7 @@ public class ZKTerminal {
         return 0;
     }
 
-    // 
+    //
     public ZKCommandReply cancelEnrollment() throws IOException {
         // Create and send the packet
         int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_CANCELCAPTURE, sessionId, replyNo, null);
@@ -1979,7 +1878,7 @@ public class ZKTerminal {
         for (int byteToSend : toSend) {
             buf[index++] = (byte) (byteToSend & 0xFF);
         }
-        
+
         DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
         socket.send(packet);
 
@@ -1988,7 +1887,7 @@ public class ZKTerminal {
 
         // Read response from the device
         int[] response = readResponse();
-        
+
         // Decode response
         CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
         int replyId = response[6] + (response[7] * 0x100);
@@ -2002,338 +1901,338 @@ public class ZKTerminal {
         // Return ZKCommandReply
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
-    
+
     //
-    
+
     // Set current system time to device time
-        public ZKCommandReply syncTime() throws IOException {
+    public ZKCommandReply syncTime() throws IOException {
 //          long encodedTime = HexUtils.encodeTime(new Date());
 
-            long encodedTime = HexUtils.convertToSeconds();
+        long encodedTime = HexUtils.convertToSeconds();
 
-            int[] timeBytes = HexUtils.convertLongToLittleEndian(encodedTime);
-            int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_SET_TIME, sessionId, replyNo, timeBytes);
-            byte[] buf = new byte[toSend.length];
-            int index = 0;
-            for (int byteToSend : toSend) {
-                buf[index++] = (byte) (byteToSend & 0xFF);
-            }
-            DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
-            socket.send(packet);
-            replyNo++;
-            int[] response = readResponse();
-            
-            CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
-            int replyId = response[6] + (response[7] * 0x100);
-            int[] payloads = new int[response.length - 8];
-            System.arraycopy(response, 8, payloads, 0, payloads.length);
-
-            try {
-                System.out.println(HexUtils.extractDate(encodedTime));
-
-            } catch (ParseException e) {
-                throw new RuntimeException(e);
-            }
-            // TODO:
-            if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
-                
-            }
-
-            return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
+        int[] timeBytes = HexUtils.convertLongToLittleEndian(encodedTime);
+        int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_SET_TIME, sessionId, replyNo, timeBytes);
+        byte[] buf = new byte[toSend.length];
+        int index = 0;
+        for (int byteToSend : toSend) {
+            buf[index++] = (byte) (byteToSend & 0xFF);
         }
-        
-        // Delete User
-        public ZKCommandReply delUser(int delUId) throws IOException {      
-            int[] delUIdArray = new int[]{delUId & 0xFF, (delUId >> 8) & 0xFF};
-            
-            int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_DELETE_USER, sessionId, replyNo, delUIdArray);
-            byte[] buf = new byte[toSend.length];
-            int index = 0;
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
+        socket.send(packet);
+        replyNo++;
+        int[] response = readResponse();
 
-            for (int byteToSend : toSend) {
-                buf[index++] = (byte) (byteToSend & 0xFF); 
-            }
-            
-            DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
-            socket.send(packet);
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+        int replyId = response[6] + (response[7] * 0x100);
+        int[] payloads = new int[response.length - 8];
+        System.arraycopy(response, 8, payloads, 0, payloads.length);
+
+        try {
+            System.out.println(HexUtils.extractDate(encodedTime));
+
+        } catch (ParseException e) {
+            throw new RuntimeException(e);
+        }
+        // TODO:
+        if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
+
+        }
+
+        return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
+    }
+
+    // Delete User
+    public ZKCommandReply delUser(int delUId) throws IOException {
+        int[] delUIdArray = new int[]{delUId & 0xFF, (delUId >> 8) & 0xFF};
+
+        int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_DELETE_USER, sessionId, replyNo, delUIdArray);
+        byte[] buf = new byte[toSend.length];
+        int index = 0;
+
+        for (int byteToSend : toSend) {
+            buf[index++] = (byte) (byteToSend & 0xFF);
+        }
+
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
+        socket.send(packet);
 //          System.out.println("Sending CMD_DELETE_USER packet. Payload: " + Arrays.toString(buf));
-            replyNo++;
+        replyNo++;
 
-            int[] response = readResponse();
-            CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
-            int replyId = response[6] + (response[7] * 0x100);
-            int[] payloads = new int[response.length - 8];
-            System.arraycopy(response, 8, payloads, 0, payloads.length);
-            
-            if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
-                return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
-            } else {
-                System.out.println("User Not found...!");
-                return null;    
-            }
+        int[] response = readResponse();
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+        int replyId = response[6] + (response[7] * 0x100);
+        int[] payloads = new int[response.length - 8];
+        System.arraycopy(response, 8, payloads, 0, payloads.length);
+
+        if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
+            return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
+        } else {
+            System.out.println("User Not found...!");
+            return null;
         }
-       
+    }
 
-        // New Add User
-        public ZKCommandReply modifyUserInfo(UserInfo newUser) throws IOException {
-            
-            int uid = newUser.getUid();
-            String userid = newUser.getUserid();
-            UserRoleEnum role = newUser.getRole();
-            int role1d = role.getRole();
-            String password = newUser.getPassword();
-            String name = newUser.getName();
-            long cardno = newUser.getCardno();
-            
-            // Prepare data for the new user entry
-            ByteBuffer commandBuffer = ByteBuffer.allocate(72).order(ByteOrder.LITTLE_ENDIAN);
 
-            commandBuffer.putShort((short) uid);
-            commandBuffer.putShort((short) role1d);
+    // New Add User
+    public ZKCommandReply modifyUserInfo(UserInfo newUser) throws IOException {
 
-            byte[] passwordBytes = password.getBytes();
-            commandBuffer.position(3);
-            commandBuffer.put(passwordBytes, 0, Math.min(passwordBytes.length, 8));
+        int uid = newUser.getUid();
+        String userid = newUser.getUserid();
+        UserRoleEnum role = newUser.getRole();
+        int role1d = role.getRole();
+        String password = newUser.getPassword();
+        String name = newUser.getName();
+        long cardno = newUser.getCardno();
 
-            byte[] nameBytes = name.getBytes();
-            commandBuffer.position(11);
-            commandBuffer.put(nameBytes, 0, Math.min(nameBytes.length, 24));
+        // Prepare data for the new user entry
+        ByteBuffer commandBuffer = ByteBuffer.allocate(72).order(ByteOrder.LITTLE_ENDIAN);
 
-            commandBuffer.position(35);
-            commandBuffer.putShort((short) cardno);
+        commandBuffer.putShort((short) uid);
+        commandBuffer.putShort((short) role1d);
 
-            commandBuffer.position(40);
-            commandBuffer.putInt(0);
+        byte[] passwordBytes = password.getBytes();
+        commandBuffer.position(3);
+        commandBuffer.put(passwordBytes, 0, Math.min(passwordBytes.length, 8));
 
-            byte[] userIdBytes = (userid != null) ? userid.getBytes() : new byte[0];
-            commandBuffer.position(48);
-            commandBuffer.put(userIdBytes, 0, Math.min(userIdBytes.length, 9));
+        byte[] nameBytes = name.getBytes();
+        commandBuffer.position(11);
+        commandBuffer.put(nameBytes, 0, Math.min(nameBytes.length, 24));
+
+        commandBuffer.position(35);
+        commandBuffer.putShort((short) cardno);
+
+        commandBuffer.position(40);
+        commandBuffer.putInt(0);
+
+        byte[] userIdBytes = (userid != null) ? userid.getBytes() : new byte[0];
+        commandBuffer.position(48);
+        commandBuffer.put(userIdBytes, 0, Math.min(userIdBytes.length, 9));
 
 //            SecurityUtils.printHexDump(commandBuffer.array());
 
-            int[] toSend = ZKCommand.getPacketByte(CommandCodeEnum.CMD_USER_WRQ, sessionId, replyNo, commandBuffer.array());
-            byte[] buf = new byte[toSend.length];
+        int[] toSend = ZKCommand.getPacketByte(CommandCodeEnum.CMD_USER_WRQ, sessionId, replyNo, commandBuffer.array());
+        byte[] buf = new byte[toSend.length];
 
-            for (int i = 0; i < toSend.length; i++) {
-                buf[i] = (byte) toSend[i];
-            }
-
-            DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
-            socket.send(packet);
-            replyNo++;
-
-            int[] response = readResponse();
-            CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
-
-            if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
-                return new ZKCommandReply(replyCode, sessionId, replyNo, null);
-            } else {
-                return null;
-            }
+        for (int i = 0; i < toSend.length; i++) {
+            buf[i] = (byte) toSend[i];
         }
 
-        // wrong work
-        public ZKCommandReply setSms(int tagp, int IDp, int validMinutesp, long startTimep, String contentp)
-                throws IOException {
-            SmsInfo newSms = new SmsInfo(tagp, IDp, validMinutesp, 0, startTimep, contentp);
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
+        socket.send(packet);
+        replyNo++;
 
-            ByteBuffer commandBuffer = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN);
+        int[] response = readResponse();
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
 
-            commandBuffer.put((byte) newSms.getTag());
-            commandBuffer.putShort((short) newSms.getId());
-            commandBuffer.putShort((short) newSms.getValidMinutes());
-            commandBuffer.putShort((short) newSms.getReserved());
-
-            if(commandBuffer.capacity()>0) {
-                System.out.println(commandBuffer.capacity());
-                return null;
-            }
-            // Convert startTimep to LocalDateTime
-            LocalDateTime localDateTime = Instant.ofEpochMilli(startTimep).atZone(ZoneId.systemDefault()).toLocalDateTime();
-
-            // Pack the LocalDateTime into the buffer
-            commandBuffer.putInt((int) localDateTime.toEpochSecond(ZoneId.systemDefault().getRules().getOffset(localDateTime)));
-
-            byte[] contentBytes = newSms.getContent().getBytes(StandardCharsets.UTF_8);
-            commandBuffer.put(contentBytes, 0, Math.min(contentBytes.length, 60));
-
-            // Print the hex dump (you can remove this in your actual code)
-            SecurityUtils.printHexDump(commandBuffer.array());
-
-            int[] toSend = ZKCommand.getPacketByte(CommandCodeEnum.CMD_SMS_WRQ, sessionId, replyNo, commandBuffer.array());
-            byte[] buf = new byte[toSend.length];
-
-            for (int i = 0; i < toSend.length; i++) {
-                buf[i] = (byte) toSend[i];
-            }
-
-            DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
-            socket.send(packet);
-            replyNo++;
-
-            int[] response = readResponse();
-            CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
-
+        if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
             return new ZKCommandReply(replyCode, sessionId, replyNo, null);
+        } else {
+            return null;
         }
-        
-        // Working wrong(content work well)
-        public SmsInfo getSms(int smsUId) throws IOException, ParseException {
-            int[] smsIdArray = new int[]{smsUId & 0xFF, (smsUId >> 8) & 0xFF};
+    }
 
-            int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_SMS_RRQ, sessionId, replyNo, smsIdArray);
-            byte[] buf = new byte[toSend.length];
-            int index = 0;
+    // wrong work
+    public ZKCommandReply setSms(int tagp, int IDp, int validMinutesp, long startTimep, String contentp)
+            throws IOException {
+        SmsInfo newSms = new SmsInfo(tagp, IDp, validMinutesp, 0, startTimep, contentp);
 
-            for (int byteToSend : toSend) {
-                buf[index++] = (byte) (byteToSend & 0xFF);
-            }
+        ByteBuffer commandBuffer = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN);
 
-            DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
-            socket.send(packet);
-            replyNo++;
+        commandBuffer.put((byte) newSms.getTag());
+        commandBuffer.putShort((short) newSms.getId());
+        commandBuffer.putShort((short) newSms.getValidMinutes());
+        commandBuffer.putShort((short) newSms.getReserved());
 
-            int[] response = readResponse();
-            if (( response[0] + (response[1] * 0x100)) == 4993){
-                return null;
-            }
-            CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
-            int replyId = response[6] + (response[7] * 0x100);
+        if (commandBuffer.capacity() > 0) {
+            System.out.println(commandBuffer.capacity());
+            return null;
+        }
+        // Convert startTimep to LocalDateTime
+        LocalDateTime localDateTime = Instant.ofEpochMilli(startTimep).atZone(ZoneId.systemDefault()).toLocalDateTime();
 
-            byte[] byteResponse = SecurityUtils.convertIntArrayToByteArray(response);
-            SecurityUtils.printHexDump(byteResponse);
+        // Pack the LocalDateTime into the buffer
+        commandBuffer.putInt((int) localDateTime.toEpochSecond(ZoneId.systemDefault().getRules().getOffset(localDateTime)));
 
-            int[] payloads = new int[response.length - 8];
-            System.arraycopy(response, 8, payloads, 0, payloads.length);
+        byte[] contentBytes = newSms.getContent().getBytes(StandardCharsets.UTF_8);
+        commandBuffer.put(contentBytes, 0, Math.min(contentBytes.length, 60));
+
+        // Print the hex dump (you can remove this in your actual code)
+        SecurityUtils.printHexDump(commandBuffer.array());
+
+        int[] toSend = ZKCommand.getPacketByte(CommandCodeEnum.CMD_SMS_WRQ, sessionId, replyNo, commandBuffer.array());
+        byte[] buf = new byte[toSend.length];
+
+        for (int i = 0; i < toSend.length; i++) {
+            buf[i] = (byte) toSend[i];
+        }
+
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
+        socket.send(packet);
+        replyNo++;
+
+        int[] response = readResponse();
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+
+        return new ZKCommandReply(replyCode, sessionId, replyNo, null);
+    }
+
+    // Working wrong(content work well)
+    public SmsInfo getSms(int smsUId) throws IOException, ParseException {
+        int[] smsIdArray = new int[]{smsUId & 0xFF, (smsUId >> 8) & 0xFF};
+
+        int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_SMS_RRQ, sessionId, replyNo, smsIdArray);
+        byte[] buf = new byte[toSend.length];
+        int index = 0;
+
+        for (int byteToSend : toSend) {
+            buf[index++] = (byte) (byteToSend & 0xFF);
+        }
+
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
+        socket.send(packet);
+        replyNo++;
+
+        int[] response = readResponse();
+        if ((response[0] + (response[1] * 0x100)) == 4993) {
+            return null;
+        }
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+        int replyId = response[6] + (response[7] * 0x100);
+
+        byte[] byteResponse = SecurityUtils.convertIntArrayToByteArray(response);
+        SecurityUtils.printHexDump(byteResponse);
+
+        int[] payloads = new int[response.length - 8];
+        System.arraycopy(response, 8, payloads, 0, payloads.length);
 //            System.out.println(response.length);
-            if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
-                int tag = response[8];
-                int id = (response[9] & 0xFF) + ((response[10] & 0xFF) << 8);
-                int reserved = ((response[13] & 0xFF) << 8) | (response[12] & 0xFF);
-                long startTime = (response[15] & 0xFFL) | ((response[14] & 0xFFL) << 8) | ((response[13] & 0xFFL) << 16) | ((response[12] & 0xFFL) << 24);
-                int validMinutes = Short.reverseBytes((short) ((response[11] << 8) | (response[10] & 0xFF))) & 0xFFFF; // on issue on 256
+        if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
+            int tag = response[8];
+            int id = (response[9] & 0xFF) + ((response[10] & 0xFF) << 8);
+            int reserved = ((response[13] & 0xFF) << 8) | (response[12] & 0xFF);
+            long startTime = (response[15] & 0xFFL) | ((response[14] & 0xFFL) << 8) | ((response[13] & 0xFFL) << 16) | ((response[12] & 0xFFL) << 24);
+            int validMinutes = Short.reverseBytes((short) ((response[11] << 8) | (response[10] & 0xFF))) & 0xFFFF; // on issue on 256
 
-                System.out.println("Raw response[11]: " + response[12]);
-                System.out.println("Raw response[10]: " + response[13]);
-                System.out.println("Raw response[10]: " + response[14]);
-                System.out.println("Raw response[10]: " + response[15]);
-                System.out.println("Raw response[10]: " + response[16]);
-                System.out.println("Raw response[10]: " + response[17]);
-                System.out.println("Raw response[10]: " + response[18]);
+            System.out.println("Raw response[11]: " + response[12]);
+            System.out.println("Raw response[10]: " + response[13]);
+            System.out.println("Raw response[10]: " + response[14]);
+            System.out.println("Raw response[10]: " + response[15]);
+            System.out.println("Raw response[10]: " + response[16]);
+            System.out.println("Raw response[10]: " + response[17]);
+            System.out.println("Raw response[10]: " + response[18]);
 
-                long encDate = ((response[15] & 0xFFL) << 24) | ((response[14] & 0xFFL) << 16) | ((response[13] & 0xFFL) << 8) | (response[12] & 0xFFL);
+            long encDate = ((response[15] & 0xFFL) << 24) | ((response[14] & 0xFFL) << 16) | ((response[13] & 0xFFL) << 8) | (response[12] & 0xFFL);
 
-                System.out.println("Decoded Date: " + encDate);
+            System.out.println("Decoded Date: " + encDate);
 
-                Date startDate = HexUtils.extractDate(encDate);
-                // System.out.println("------ daete  " + startDate);
-                int contentOffset = 19;
-                byte[] contentBytes = new byte[321];
-                for (int i = 0; i < 321; i++) {
-                    contentBytes[i] = (byte) (response[i + contentOffset] & 0xFF);
-                }
-                
-                String content = new String(contentBytes, StandardCharsets.UTF_8).trim();
+            Date startDate = HexUtils.extractDate(encDate);
+            // System.out.println("------ daete  " + startDate);
+            int contentOffset = 19;
+            byte[] contentBytes = new byte[321];
+            for (int i = 0; i < 321; i++) {
+                contentBytes[i] = (byte) (response[i + contentOffset] & 0xFF);
+            }
+
+            String content = new String(contentBytes, StandardCharsets.UTF_8).trim();
 //                SecurityUtils.printUnsignedBytes(contentBytes);
 
-                // Print decoded values
+            // Print decoded values
 //                System.out.println("Tag: " + tag);
 //                System.out.println("ID: " + id);
 //                System.out.println("Valid Minutes: " + validMinutes);
 //                System.out.println("Reserved: " + reserved);
 //                System.out.println("Start Time: " + startTime + " " + startDate);
 
-                return new SmsInfo(tag, id, validMinutes, reserved, startTime, content);
-            }
-            return null;            
+            return new SmsInfo(tag, id, validMinutes, reserved, startTime, content);
         }
+        return null;
+    }
 
 
     // Detect SMS
-        public ZKCommandReply delSMS(int smsId) throws IOException {        
-            int[] delsmsIdArray = new int[]{smsId & 0xFF, (smsId >> 8) & 0xFF};
-            
-            int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_DELETE_SMS, sessionId, replyNo, delsmsIdArray);
-            byte[] buf = new byte[toSend.length];
-            int index = 0;
+    public ZKCommandReply delSMS(int smsId) throws IOException {
+        int[] delsmsIdArray = new int[]{smsId & 0xFF, (smsId >> 8) & 0xFF};
 
-            for (int byteToSend : toSend) {
-                buf[index++] = (byte) (byteToSend & 0xFF); 
-            }
-            
-            DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
-            socket.send(packet);
-            replyNo++;
+        int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_DELETE_SMS, sessionId, replyNo, delsmsIdArray);
+        byte[] buf = new byte[toSend.length];
+        int index = 0;
 
-            int[] response = readResponse();
-            CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
-            int replyId = response[6] + (response[7] * 0x100);
-                        
-            int[] payloads = new int[response.length - 8];
-            System.arraycopy(response, 8, payloads, 0, payloads.length);
-            
-            if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
-                return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
-            } 
-            return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
-
+        for (int byteToSend : toSend) {
+            buf[index++] = (byte) (byteToSend & 0xFF);
         }
 
-        // enrolled user fingerprint capture
-        public ZKCommandReply enrollFinger(int uid, int tempId, String userId) throws IOException {
-            byte[] enroll_dat = new byte[26];
-            Arrays.fill(enroll_dat, (byte) 0);
-            System.arraycopy(userId.getBytes(), 0, enroll_dat, 0, userId.length());
-            enroll_dat[24] = (byte) tempId;
-            enroll_dat[25] = 0x01;
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
+        socket.send(packet);
+        replyNo++;
 
-            byte[] startEnrollCommand = {0x61, 0x00, (byte) uid, (byte) (uid >> 8), (byte) tempId, (byte) (tempId >> 8)};
+        int[] response = readResponse();
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+        int replyId = response[6] + (response[7] * 0x100);
 
-            // Concatenate enroll_dat and startEnrollCommand arrays
-            byte[] combinedArray = new byte[enroll_dat.length + startEnrollCommand.length];
-            System.arraycopy(enroll_dat, 0, combinedArray, 0, enroll_dat.length);
-            System.arraycopy(startEnrollCommand, 0, combinedArray, enroll_dat.length, startEnrollCommand.length);
-            int[] startEnrollPacket = ZKCommand.getPacketByte(CommandCodeEnum.CMD_STARTENROLL, sessionId, replyNo, combinedArray);
+        int[] payloads = new int[response.length - 8];
+        System.arraycopy(response, 8, payloads, 0, payloads.length);
+
+        if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
+            return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
+        }
+        return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
+
+    }
+
+    // enrolled user fingerprint capture
+    public ZKCommandReply enrollFinger(int uid, int tempId, String userId) throws IOException {
+        byte[] enroll_dat = new byte[26];
+        Arrays.fill(enroll_dat, (byte) 0);
+        System.arraycopy(userId.getBytes(), 0, enroll_dat, 0, userId.length());
+        enroll_dat[24] = (byte) tempId;
+        enroll_dat[25] = 0x01;
+
+        byte[] startEnrollCommand = {0x61, 0x00, (byte) uid, (byte) (uid >> 8), (byte) tempId, (byte) (tempId >> 8)};
+
+        // Concatenate enroll_dat and startEnrollCommand arrays
+        byte[] combinedArray = new byte[enroll_dat.length + startEnrollCommand.length];
+        System.arraycopy(enroll_dat, 0, combinedArray, 0, enroll_dat.length);
+        System.arraycopy(startEnrollCommand, 0, combinedArray, enroll_dat.length, startEnrollCommand.length);
+        int[] startEnrollPacket = ZKCommand.getPacketByte(CommandCodeEnum.CMD_STARTENROLL, sessionId, replyNo, combinedArray);
 //            sendPacket(startEnrollPacket);
-            byte[] buf = new byte[startEnrollPacket.length];
+        byte[] buf = new byte[startEnrollPacket.length];
 
-            for (int i = 0; i < startEnrollPacket.length; i++) {
-                buf[i] = (byte) startEnrollPacket[i];
-            }
+        for (int i = 0; i < startEnrollPacket.length; i++) {
+            buf[i] = (byte) startEnrollPacket[i];
+        }
 
-            DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
-            socket.send(packet);
-            replyNo++;
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
+        socket.send(packet);
+        replyNo++;
 
-            int[] response = readResponse();
+        int[] response = readResponse();
 
-            CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
-            int replyId = response[6] + (response[7] * 0x100);
-            int[] payloads = Arrays.copyOfRange(response, 8, response.length);
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+        int replyId = response[6] + (response[7] * 0x100);
+        int[] payloads = Arrays.copyOfRange(response, 8, response.length);
 
-            // TODO: Add specific logic for CMD_ACK_OK response
-            if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
-                // Log success or perform additional actions if needed
-                
+        // TODO: Add specific logic for CMD_ACK_OK response
+        if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
+            // Log success or perform additional actions if needed
+
 //                return true;
-            }
+        }
 
-            // Return ZKCommandReply
-             return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
+        // Return ZKCommandReply
+        return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
 
 //            return false;
+    }
+
+    private void sendPacket(int[] packetData) throws IOException {
+        byte[] buf = new byte[packetData.length];
+
+        for (int i = 0; i < packetData.length; i++) {
+            buf[i] = (byte) packetData[i];
         }
 
-        private void sendPacket(int[] packetData) throws IOException {
-            byte[] buf = new byte[packetData.length];
-
-            for (int i = 0; i < packetData.length; i++) {
-                buf[i] = (byte) packetData[i];
-            }
-
-            DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
-            socket.send(packet);
-        }
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
+        socket.send(packet);
+    }
 
 
     // Test Voice CMD_TESTVOICE
@@ -2397,29 +2296,29 @@ public class ZKTerminal {
     //
     //       :param index: int sound index
     //       :return: bool
-    public ZKCommandReply testVoice(int voice) throws IOException {     
-            int[] voiceArray = new int[]{voice};
-            int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_TESTVOICE, sessionId, replyNo, voiceArray);
-            byte[] buf = new byte[toSend.length];
-            int index = 0;
+    public ZKCommandReply testVoice(int voice) throws IOException {
+        int[] voiceArray = new int[]{voice};
+        int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_TESTVOICE, sessionId, replyNo, voiceArray);
+        byte[] buf = new byte[toSend.length];
+        int index = 0;
 
-            for (int byteToSend : toSend) {
-                buf[index++] = (byte) (byteToSend & 0xFF); 
-            }
-
-            DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
-            socket.send(packet);
-            replyNo++;
-
-            int[] response = readResponse();
-            CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
-            int replyId = response[6] + (response[7] * 0x100);
-            int[] payloads = new int[response.length - 8];
-            System.arraycopy(response, 8, payloads, 0, payloads.length);
-
-            return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
+        for (int byteToSend : toSend) {
+            buf[index++] = (byte) (byteToSend & 0xFF);
         }
-       
+
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
+        socket.send(packet);
+        replyNo++;
+
+        int[] response = readResponse();
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+        int replyId = response[6] + (response[7] * 0x100);
+        int[] payloads = new int[response.length - 8];
+        System.arraycopy(response, 8, payloads, 0, payloads.length);
+
+        return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
+    }
+
     // CMD_REFRESHDATA (Not Verified)
     public ZKCommandReply RefreshData() throws IOException, ParseException {
         int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_REFRESHDATA, sessionId, replyNo, null);
@@ -2428,7 +2327,7 @@ public class ZKTerminal {
         for (int byteToSend : toSend) {
             buf[index++] = (byte) byteToSend;
         }
-        DatagramPacket packet = new DatagramPacket(buf, buf.length,address, port);
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
         socket.send(packet);
         replyNo++;
         int[] response = readResponse();
@@ -2437,7 +2336,7 @@ public class ZKTerminal {
         if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
 //             boolean first = true;
         }
-          
+
         int replyId = response[6] + (response[7] * 0x100);
         int[] payloads = new int[response.length - 8];
         System.arraycopy(response, 8, payloads, 0, payloads.length);
@@ -2452,7 +2351,7 @@ public class ZKTerminal {
         for (int byteToSend : toSend) {
             buf[index++] = (byte) byteToSend;
         }
-        DatagramPacket packet = new DatagramPacket(buf, buf.length,address, port);
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, port);
         socket.send(packet);
         replyNo++;
         int[] response = readResponse();
@@ -2461,74 +2360,14 @@ public class ZKTerminal {
         if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
 //             boolean first = true;
         }
-          
+
         int replyId = response[6] + (response[7] * 0x100);
         int[] payloads = new int[response.length - 8];
         System.arraycopy(response, 8, payloads, 0, payloads.length);
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
-        
 
-    // Method to create JSON backup
-    public void createBackup() {
-        ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
-
-        try (FileWriter writer = new FileWriter("device_backup.json")) {
-            Map<String, Object> deviceInfoMap = new HashMap<>();
-//            deviceInfoMap.put("attendanceRecords", getAttendanceRecords());
-            deviceInfoMap.put("isOnlyRFMachine", IsOnlyRFMachine());
-            deviceInfoMap.put("firmwareVersion", getFirmwareVersion());
-            deviceInfoMap.put("productTime", getProductTime());
-            deviceInfoMap.put("deviceName", getDeviceName());
-            deviceInfoMap.put("pin2Width", getPIN2Width());
-            deviceInfoMap.put("attendanceRecords", getAttendanceRecords());
-            deviceInfoMap.put("isOnlyRFMachine", IsOnlyRFMachine());
-            deviceInfoMap.put("firmwareVersion", getFirmwareVersion());
-            deviceInfoMap.put("productTime", getProductTime());
-            deviceInfoMap.put("deviceName", getDeviceName());
-            deviceInfoMap.put("pin2Width", getPIN2Width());
-            deviceInfoMap.put("showState", getShowState());
-            deviceInfoMap.put("deviceIP", getDeviceIP());
-            deviceInfoMap.put("devicePort", getDevicePORT());
-            deviceInfoMap.put("commKey", getCommKey());
-            deviceInfoMap.put("deviceId", getDeviceId());
-            deviceInfoMap.put("isDHCP", iSDHCP());
-            deviceInfoMap.put("dns", getDNS());
-            deviceInfoMap.put("enableProxyServer", isEnableProxyServer());
-            deviceInfoMap.put("proxyServerIP", getProxyServerIP());
-            deviceInfoMap.put("proxyServerPort", getProxyServerPort());
-            deviceInfoMap.put("daylightSavingTime", isDaylightSavingTime());
-            deviceInfoMap.put("language", getLanguage());
-            deviceInfoMap.put("lockPowerKey", isLockPowerKey());
-            deviceInfoMap.put("voiceOn", isVoiceOn());
-            deviceInfoMap.put("platform", getPlatform());
-            deviceInfoMap.put("serialNumber", getSerialNumber());
-            deviceInfoMap.put("mac", getMAC());
-            deviceInfoMap.put("faceVersion", getFaceVersion());
-            deviceInfoMap.put("fpVersion", getFPVersion());
-            deviceInfoMap.put("oemVendor", getOEMVendor());
-//            deviceInfoMap.put("allUsers", getAllUsers());
-            deviceInfoMap.put("workCode", getWorkCode());
-            deviceInfoMap.put("deviceStatus", getDeviceStatus());
-            deviceInfoMap.put("state", getState());
-//            deviceInfoMap.put("deviceTime", getDeviceTime());
-//            List<SmsInfo> smsInfo = null;
-//            int i = 1;
-//            while (smsInfo == null && i <= 10) { // You can adjust the loop condition as needed
-//                smsInfo = getSms(i);
-//                i++;
-//            }
-//            deviceInfoMap.put("smsInfo", smsInfo);
-            objectMapper.writeValue(writer, deviceInfoMap);
-            System.out.println("Device information backup created successfully.");
-        } catch (IOException | ParseException e) {
-            e.printStackTrace();
-            System.out.println("Error creating device information backup.");
-        }
-    }
-
-    // Read response 
+    // Read response
     public int[] readResponse() throws IOException {
         byte[] buf = new byte[1000000];
 
@@ -2542,33 +2381,6 @@ public class ZKTerminal {
         }
 
         return response;
-
-        /*int index = 0;
-        int[] data = new int[1000000];
-
-        int read;
-        int size = 0;
-
-        boolean reading = true;
-
-        while (reading && (read = is.read()) != -1) {
-            if (index >= 4 && index <= 7) {
-                size += read * Math.pow(16, index - 4);
-            } else if (index > 7) {
-                if (index - 7 >= size) {
-                    reading = false;
-                }
-            }
-
-            data[index] = read;
-            index++;
-        }
-
-        int[] finalData = new int[index];
-
-        System.arraycopy(data, 0, finalData, 0, index);
-
-        return finalData;*/
     }
 
 }

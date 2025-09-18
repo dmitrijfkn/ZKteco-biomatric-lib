@@ -1,6 +1,9 @@
-package com.zkteco.Enum;
+package com.zkteco.enums;
 
 
+import lombok.Getter;
+
+@Getter
 public enum CommandCodeEnum {
     //Begin cognnection
     CMD_CONNECT(1000),
@@ -170,7 +173,4 @@ public enum CommandCodeEnum {
         this.code = code;
     }
 
-    public int getCode() {
-        return code;
-    }
 }

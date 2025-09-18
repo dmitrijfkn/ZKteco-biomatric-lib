@@ -1,5 +1,8 @@
-package com.zkteco.Enum;
+package com.zkteco.enums;
 
+import lombok.Getter;
+
+@Getter
 public enum UserRoleEnum {
 	USER_DEFAULT(0),
 	USER_ENROLLER(2),
@@ -10,10 +13,6 @@ public enum UserRoleEnum {
 
     private UserRoleEnum(int role) {
         this.role = role;
-    }
-
-    public int getRole() {
-        return role;
     }
 
 }

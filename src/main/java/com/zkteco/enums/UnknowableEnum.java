@@ -1,4 +1,4 @@
-package com.zkteco.Enum;
+package com.zkteco.enums;
 
 public enum UnknowableEnum {
     unknown;

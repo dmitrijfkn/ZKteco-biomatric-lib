@@ -1,9 +1,9 @@
-package com.zkteco.Enum;
+package com.zkteco.enums;
 
-//import java.util.HashMap;
-//import java.util.Map;
 import com.zkteco.command.events.ErrorCode;
+import lombok.Getter;
 
+@Getter
 public enum CommandReplyCodeEnum {
     //The request was processed successfully
     CMD_ACK_OK(2000),
@@ -30,17 +30,13 @@ public enum CommandReplyCodeEnum {
         this.code = code;
     }
 
-    public int getCode() {
-        return code;
-    }
-    
     public static CommandReplyCodeEnum decode(int acode) {
         for (CommandReplyCodeEnum commandCode : values()) {
             if (commandCode.getCode() == acode) {
                 return commandCode;
             }
         }
-        
+
         ErrorCode errorCode = ErrorCode.getByCode(acode);
         if (errorCode != null) {
             throw new RuntimeException("Reply code not recognized: " + acode + " - " + errorCode.getErrorMessage());

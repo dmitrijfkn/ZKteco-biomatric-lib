@@ -3,8 +3,8 @@ package com.zkteco.iclockhelper;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-import com.zkteco.Enum.AlarmEnum;
-import com.zkteco.Enum.OperationEnum;
+import com.zkteco.enums.AlarmEnum;
+import com.zkteco.enums.OperationEnum;
 
 public class Operation extends ServerDatetimeMixin {
     private final String object;

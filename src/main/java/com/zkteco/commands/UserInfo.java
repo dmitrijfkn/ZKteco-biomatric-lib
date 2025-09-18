@@ -5,7 +5,7 @@ import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 
-import com.zkteco.Enum.UserRoleEnum;
+import com.zkteco.enums.UserRoleEnum;
 
 public class UserInfo {
 

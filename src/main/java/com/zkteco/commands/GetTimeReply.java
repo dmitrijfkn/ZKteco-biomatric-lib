@@ -3,9 +3,11 @@ package com.zkteco.commands;
 import java.text.ParseException;
 import java.util.Date;
 
-import com.zkteco.Enum.CommandReplyCodeEnum;
+import com.zkteco.enums.CommandReplyCodeEnum;
 import com.zkteco.utils.HexUtils;
+import lombok.Getter;
 
+@Getter
 public class GetTimeReply extends ZKCommandReply {
 
     private final Date deviceDate;
@@ -21,13 +23,6 @@ public class GetTimeReply extends ZKCommandReply {
                 + (Integer.valueOf(payloadsStr.substring(0, 2), 16));
 
         deviceDate = HexUtils.extractDate(encDate);
-    }
-
-    /**
-     * @return the deviceDate
-     */
-    public Date getDeviceDate() {
-        return deviceDate;
     }
 
 }

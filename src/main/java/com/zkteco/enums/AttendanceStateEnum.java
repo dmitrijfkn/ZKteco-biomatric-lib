@@ -1,5 +1,8 @@
-package com.zkteco.Enum;
+package com.zkteco.enums;
 
+import lombok.Getter;
+
+@Getter
 public enum AttendanceStateEnum {
     CHECK_IN(0),
     CHECK_OUT(1),
@@ -14,7 +17,4 @@ public enum AttendanceStateEnum {
         this.attendanceState = attendanceState;
     }
 
-    public int getAttendanceState() {
-        return attendanceState;
-    }   
 }
