@@ -1,6 +1,7 @@
 package com.zkteco.commands;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
@@ -183,14 +184,14 @@ public class UserInfo {
 
         user.setUid(Short.reverseBytes(buffer.getShort(0)));
         user.setPassword(new String(passwordByte));
-        user.setName(new String(nameByte).trim());
+        user.setName(new String(nameByte, Charset.forName("Windows-1251")).trim());
         user.setCardno(Integer.reverseBytes(buffer.getInt(35)));
         user.setGroupNumber(String.valueOf(buffer.get(38)));
         user.setUserTimeZoneFlag(Short.reverseBytes(buffer.getShort(40)));
         user.setTimeZone1(Short.reverseBytes(buffer.getShort(42)));
         user.setTimeZone2(Short.reverseBytes(buffer.getShort(44)));
         user.setTimeZone3(Short.reverseBytes(buffer.getShort(46)));
-        user.setUserid(new String(userIdByte));
+        user.setUserid(new String(userIdByte).split("\u0000")[0]);
         return user;
     }
 

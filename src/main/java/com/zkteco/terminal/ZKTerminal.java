@@ -1,20 +1,33 @@
 package com.zkteco.terminal;
 
-import com.zkteco.enums.*;
 import com.zkteco.Exception.DeviceNotConnectException;
+import com.zkteco.Exception.UploadFailedException;
 import com.zkteco.command.events.EventCode;
-import com.zkteco.commands.*;
+import com.zkteco.commands.AttendanceRecord;
+import com.zkteco.commands.GetTimeReply;
+import com.zkteco.commands.SmsInfo;
+import com.zkteco.commands.UserInfo;
+import com.zkteco.commands.ZKCommand;
+import com.zkteco.commands.ZKCommandReply;
+import com.zkteco.enums.AttendanceStateEnum;
+import com.zkteco.enums.AttendanceTypeEnum;
+import com.zkteco.enums.CommandCodeEnum;
+import com.zkteco.enums.CommandReplyCodeEnum;
+import com.zkteco.enums.OnOffenum;
+import com.zkteco.enums.UserRoleEnum;
 import com.zkteco.utils.HexUtils;
 import com.zkteco.utils.SecurityUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 import java.time.Instant;
@@ -22,6 +35,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -30,6 +44,9 @@ import java.util.Map;
 
 @Slf4j
 public class ZKTerminal {
+
+    private static final int MAX_RETRIES = 3;           // how many attempts per finger
+    private static final long INITIAL_BACKOFF_MS = 500; // backoff grows 0.5s -> 1s -> 2s
 
     private final String ip;
     private final int port;
@@ -91,6 +108,114 @@ public class ZKTerminal {
             return false;
         }
     }
+
+    public void readUserTemplate(short uid, byte fingerIndex) throws IOException {
+        ByteBuffer buffer = ByteBuffer.allocate(3);
+        buffer.order(ByteOrder.LITTLE_ENDIAN);
+        buffer.putShort(uid);
+        buffer.put(fingerIndex);
+
+        byte[] payload = buffer.array();
+
+        int[] packet = ZKCommand.getPacketByte(
+                CommandCodeEnum.CMD_USERTEMP_RRQ,
+                sessionId,
+                replyNo++,
+                payload
+        );
+
+        byte[] buf = new byte[packet.length];
+        for (int i = 0; i < packet.length; i++) {
+            buf[i] = (byte) packet[i];
+        }
+
+        DatagramPacket udp = new DatagramPacket(buf, buf.length, address, port);
+        socket.send(udp);
+
+        int[] response = readResponse();  // <- получишь CMD_PREPARE_DATA
+
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] << 8));
+        if (replyCode == CommandReplyCodeEnum.CMD_PREPARE_DATA) {
+            System.out.println("CMD_PREPARE_DATA получен — ждём шаблон...");
+
+            int[] dataResponse = readResponse();  // <- вот здесь придёт CMD_ACK_OK с данными
+            CommandReplyCodeEnum dataCode = CommandReplyCodeEnum.decode(dataResponse[0] + (dataResponse[1] << 8));
+
+            if (dataCode == CommandReplyCodeEnum.CMD_DATA) {
+                int size = dataResponse.length - 8;
+                System.out.println("✅ Шаблон получен, размер: " + size + " байт");
+
+                byte[] template = new byte[size];
+                for (int i = 0; i < size; i++) {
+                    template[i] = (byte) dataResponse[8 + i];
+                }
+
+                System.out.println(template);
+                // Можешь сохранить шаблон, вывести в HEX/Base64 и т.д.
+            } else {
+                System.out.println("❌ Ошибка при получении шаблона: " + dataCode);
+            }
+
+        } else {
+            System.out.println("❌ Шаблон НЕ найден: " + replyCode);
+        }
+
+    }
+
+
+    public void testSend(byte[] payload) throws IOException, ParseException, InterruptedException {
+
+        int[] packet = ZKCommand.getPacketByte(
+                CommandCodeEnum.CMD_USERTEMP_WRQ,   // важно: WRQ = write request
+                sessionId,
+                replyNo,
+                payload
+        );
+
+        // отправляем через socket
+        byte[] buf = new byte[packet.length];
+        for (int i = 0; i < packet.length; i++) {
+            buf[i] = (byte) packet[i];
+        }
+
+        DatagramPacket udp = new DatagramPacket(buf, buf.length, address, port);
+        socket.send(udp);
+        replyNo++;
+
+        int[] response = readResponse();  // твой метод чтения
+
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+        if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
+            System.out.println("ОК");
+        } else {
+            System.out.println("Ошибка: " + replyCode);
+        }
+
+        int[] response1 = readResponse();
+        CommandReplyCodeEnum replyCode1 = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+        if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
+            System.out.println("ОК");
+        } else {
+            System.out.println("Ошибка: " + replyCode);
+        }
+
+        int[] response2 = readResponse();
+        CommandReplyCodeEnum replyCode2 = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+        if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
+            System.out.println("ОК");
+        } else {
+            System.out.println("Ошибка: " + replyCode);
+        }
+
+        int[] response3 = readResponse();
+        CommandReplyCodeEnum replyCode3 = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
+        if (replyCode == CommandReplyCodeEnum.CMD_ACK_OK) {
+            System.out.println("ОК");
+        } else {
+            System.out.println("Ошибка: " + replyCode);
+        }
+    }
+
 
     // Disconnect Devices to this Application
     public void disconnect() throws IOException {
@@ -427,7 +552,8 @@ public class ZKTerminal {
     }
 
     public ZKCommandReply resetDevice() throws IOException, ParseException {
-        int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_CLEAR_DATA, sessionId, replyNo, null);
+        int[] payload = {5 & 0xFF};
+        int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_CLEAR_DATA, sessionId, replyNo, payload);
         byte[] buf = new byte[toSend.length];
         int index = 0;
         for (int byteToSend : toSend) {
@@ -1994,12 +2120,12 @@ public class ZKTerminal {
         commandBuffer.position(3);
         commandBuffer.put(passwordBytes, 0, Math.min(passwordBytes.length, 8));
 
-        byte[] nameBytes = name.getBytes();
+        byte[] nameBytes = name.getBytes(Charset.forName("Windows-1251"));
         commandBuffer.position(11);
         commandBuffer.put(nameBytes, 0, Math.min(nameBytes.length, 24));
 
         commandBuffer.position(35);
-        commandBuffer.putShort((short) cardno);
+        commandBuffer.putLong(cardno);
 
         commandBuffer.position(40);
         commandBuffer.putInt(0);
@@ -2319,6 +2445,267 @@ public class ZKTerminal {
         return new ZKCommandReply(replyCode, sessionId, replyId, payloads);
     }
 
+    /**
+     * Загружает в устройство шаблон отпечатка пальца для указанного пользователя.
+     * Реализация согласно протоколу ZKTeco.
+     *
+     * @param userUid ID пользователя в устройстве
+     * @param fpIndex индекс пальца (0–9)
+     * @param fpFlag  флаг шаблона (например, 0 = обычный, 1 = постоянный)
+     * @return ответ устройства в виде ZKCommandReply
+     * @throws IOException при ошибке ввода-вывода
+     */
+    public ZKCommandReply uploadFp(int userUid, int fpIndex, int fpFlag, byte[] template) throws IOException {
+        // 1. Отключаем устройство согласно протоколу
+        ZKCommandReply disableReply = disableDevice();
+        if (disableReply.getCode() != CommandReplyCodeEnum.CMD_ACK_OK) {
+            return disableReply;
+        }
+
+        // 3. Подготовка данных согласно протоколу
+        // prep_data: [data_size(2LE)][fixed(2LE)=0000]
+        short fpSize = (short) template.length;
+        ByteBuffer prepData = ByteBuffer.allocate(4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putShort(fpSize)      // data_size (2 bytes, little-endian)
+                .putShort((short) 0);  // fixed value 0000 (2 bytes)
+
+        ZKCommandReply prepReply = sendSimpleCommand(CommandCodeEnum.CMD_PREPARE_DATA, prepData.array());
+        if (prepReply.getCode() != CommandReplyCodeEnum.CMD_ACK_OK) {
+            return prepReply;
+        }
+
+        // 4. Отправка шаблона
+        ZKCommandReply dataReply = sendSimpleCommand(CommandCodeEnum.CMD_DATA, template);
+        if (dataReply.getCode() != CommandReplyCodeEnum.CMD_ACK_OK) {
+            return dataReply;
+        }
+
+        // 5. Запрос контрольной суммы
+        ZKCommandReply checksumReply = sendSimpleCommand(CommandCodeEnum.CMD_CHECKSUM_BUFFER, null);
+        if (checksumReply.getCode() != CommandReplyCodeEnum.CMD_ACK_OK) {
+            return checksumReply;
+        }
+
+        // 6. Запрос на запись согласно протоколу
+        // tmp_wreq: [user_sn(2LE)][fp_index(1)][fp_flag(1)][fp_size(2LE)]
+        ByteBuffer tmpWreqData = ByteBuffer.allocate(6)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putShort((short) userUid)      // user_sn (2 bytes, little-endian)
+                .put((byte) fpIndex)   // fp_index (1 byte)
+                .put((byte) fpFlag)    // fp_flag (1 byte)
+                .putShort(fpSize);     // fp_size (2 bytes, little-endian)
+
+        ZKCommandReply writeReply = sendSimpleCommand(CommandCodeEnum.CMD_TMP_WRITE, tmpWreqData.array());
+        if (writeReply.getCode() != CommandReplyCodeEnum.CMD_ACK_OK) {
+            return writeReply;
+        }
+
+        // 7. Освобождение буфера
+        ZKCommandReply freeReply = sendSimpleCommand(CommandCodeEnum.CMD_FREE_DATA, null);
+        if (freeReply.getCode() != CommandReplyCodeEnum.CMD_ACK_OK) {
+            return freeReply;
+        }
+
+        // 8. Обновление данных согласно протоколу
+        ZKCommandReply refreshReply = sendSimpleCommand(CommandCodeEnum.CMD_REFRESHDATA, null);
+        if (refreshReply.getCode() != CommandReplyCodeEnum.CMD_ACK_OK) {
+            return refreshReply;
+        }
+
+        // 9. Включаем устройство обратно
+        ZKCommandReply enableReply = enableDevice();
+        if (enableReply.getCode() != CommandReplyCodeEnum.CMD_ACK_OK) {
+            return enableReply;
+        }
+
+        return writeReply;
+    }
+
+    /**
+     * Новый метод для загрузки отпечатка из Base64 строки
+     *
+     * @param userUid        ID пользователя
+     * @param base64Template Base64 строка отпечатка
+     * @param fpIndex        индекс пальца
+     * @param fpFlag         флаг отпечатка
+     * @throws IOException
+     * @throws ParseException
+     */
+    public void uploadFpFromBase64(int userUid, String base64Template, byte fpIndex, byte fpFlag) throws IOException, ParseException {
+        log.info("uploadFpFromBase64: userUid=" + userUid + ", fpIndex=" + fpIndex + ", fpFlag=" + fpFlag + ", base64Length=" + base64Template.length());
+
+        // Конвертируем Base64 строку в байты
+        byte[] template = Base64.getDecoder().decode(base64Template);
+        log.info("Decoded template size: " + template.length + " bytes");
+
+        // Используем существующий метод uploadFp
+        uploadFp(userUid, template, fpIndex, fpFlag);
+
+        log.info("uploadFpFromBase64 completed successfully");
+    }
+
+    // Вспомогательные методы
+    public boolean uploadFp(int userUid, byte[] fp, byte fpIndex, byte fpFlag) throws IOException {
+        List<ZKCommandReply> replies = new ArrayList<>();
+        try {
+
+            // 2. Отключаем устройство
+            replies.add(disableDevice());
+
+            // 3. Подготовка данных
+            short fpSize = (short) fp.length;
+            ByteBuffer prepData = ByteBuffer.allocate(4)
+                    .order(ByteOrder.LITTLE_ENDIAN)
+                    .putShort(fpSize)
+                    .putShort((short) 0);  // 2 нулевых байта
+
+            replies.add(sendSimpleCommand(CommandCodeEnum.CMD_PREPARE_DATA, prepData.array()));
+
+            // 4. Отправка шаблона
+            replies.add(sendSimpleCommand(CommandCodeEnum.CMD_DATA, fp));
+
+            // 5. Запрос контрольной суммы
+            replies.add(sendSimpleCommand(CommandCodeEnum.CMD_CHECKSUM_BUFFER, null));
+
+            // 6. Формирование и отправка запроса на запись
+            ByteBuffer tmpWreqData = ByteBuffer.allocate(6)
+                    .order(ByteOrder.LITTLE_ENDIAN)
+                    .putShort((short) userUid)
+                    .put(fpIndex)
+                    .put(fpFlag)
+                    .putShort(fpSize);
+
+            replies.add(sendSimpleCommand(CommandCodeEnum.CMD_TMP_WRITE, tmpWreqData.array()));
+
+            // 7. Освобождение буфера
+            replies.add(sendSimpleCommand(CommandCodeEnum.CMD_FREE_DATA, null));
+
+            // 8. Обновление данных
+            refreshData();
+        } finally {
+            try {
+                enableDevice();
+            } catch (Exception e) {
+                log.warn("Failed to enable device {}", ip);
+            }
+        }
+
+        for (ZKCommandReply reply : replies) {
+            if (reply.getCode() != CommandReplyCodeEnum.CMD_ACK_OK) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public void refreshData() throws IOException {
+        sendSimpleCommand(CommandCodeEnum.CMD_REFRESHDATA, null);
+    }
+
+    public ZKCommandReply saveData() throws IOException {
+        return sendSimpleCommand(CommandCodeEnum._CMD_SAVE_USERTEMPS, new byte[0]);
+    }
+
+    public ZKCommandReply sendSimpleCommand(CommandCodeEnum cmd, byte[] payload) throws IOException {
+        int[] toSend = ZKCommand.getPacketByte(cmd, this.sessionId, this.replyNo, payload);
+        byte[] buf = new byte[toSend.length];
+        int index = 0;
+
+        for(int byteToSend : toSend) {
+            buf[index++] = (byte)byteToSend;
+        }
+
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, this.address, this.port);
+        this.socket.send(packet);
+        ++this.replyNo;
+        int[] response = this.readResponse();
+        CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + response[1] * 256);
+        int replyId = response[6] + response[7] * 256;
+        int[] payloads = new int[response.length - 8];
+        System.arraycopy(response, 8, payloads, 0, payloads.length);
+        return new ZKCommandReply(replyCode, this.sessionId, replyId, payloads);
+    }
+
+    public boolean uploadAndVerifyFingerprint(UserInfo user, byte[] fingerprint, byte index)
+            throws NoSuchFieldException, IllegalAccessException,
+            IOException, ParseException, UploadFailedException {
+
+        uploadFp(user.getUid(), fingerprint, index, (byte) 1);
+
+        boolean verified = verifyFingerprint(user.getUid(), fingerprint, index);
+        if (verified) {
+            log.info("✅ Verified UID={}, index={}", user.getUid(), index);
+            return true;
+        } else {
+            return false;
+          //  throw new UploadFailedException("Fingerprint verification failed");
+        }
+    }
+
+    private boolean verifyFingerprint(int userUid, byte[] fingerprint, byte index) throws NoSuchFieldException, IllegalAccessException {
+        // --- Preconditions ---
+        if (fingerprint == null) {
+            log.warn("verifyFingerprint: fingerprint is null");
+            return false;
+        }
+
+        try {
+            // Получаем отпечаток с устройства
+            log.info("Получаем отпечаток с устройства для пользователя 5000, палец 0...");
+            ZKCommandReply verifyReply = getUserTmpExStr(userUid, 0);
+
+            if (verifyReply != null && verifyReply.getCode() == CommandReplyCodeEnum.CMD_ACK_OK) {
+                log.info("getUserTmpExStr result -> {}", verifyReply.getCode());
+
+                // Получаем данные отпечатка через рефлексию
+                try {
+                    Field payloadsField = verifyReply.getClass().getDeclaredField("payloads");
+                    payloadsField.setAccessible(true);
+                    int[] payloads = (int[]) payloadsField.get(verifyReply);
+
+                    if (payloads != null && payloads.length > index) {
+                        log.info("Получен отпечаток с устройства размером {} байт", payloads.length);
+
+                        // Конвертируем в Base64 для сравнения
+                        byte[] retrievedBytes = new byte[payloads.length];
+                        for (int i = 0; i < payloads.length; i++) {
+                            retrievedBytes[i] = (byte) payloads[i];
+                        }
+                        String retrievedBase64 = Base64.getEncoder().encodeToString(retrievedBytes);
+                        log.info("Отпечаток с устройства в Base64: {}", retrievedBase64);
+
+                        // Сравниваем с оригинальным отпечатком
+                        log.info("=== СРАВНЕНИЕ ОТПЕЧАТКОВ ===");
+                        log.info("Оригинальный отпечаток: {}", fingerprint);
+                        log.info("Полученный отпечаток: {}", retrievedBase64);
+
+                        if (fingerprint.equals(retrievedBase64)) {
+                            log.info("✅ ОТПЕЧАТКИ ИДЕНТИЧНЫ! Загрузка прошла успешно!");
+                            return true;
+                        } else {
+                            log.warn("❌ ОТПЕЧАТКИ РАЗЛИЧАЮТСЯ! Загрузка не удалась!");
+                            log.warn("Размеры: оригинал={} байт, получен={} байт",
+                                    fingerprint.length, retrievedBytes.length);
+                        }
+
+                        log.info("=== КОНЕЦ СРАВНЕНИЯ ===");
+                    } else {
+                        log.warn("❌ Отпечаток с устройства пустой или null");
+                    }
+                } catch (Exception e) {
+                    log.warn("Ошибка при получении данных отпечатка: {}", e.getMessage());
+                }
+            } else {
+                log.warn("❌ getUserTmpExStr failed: {}",
+                        verifyReply != null ? verifyReply.getCode() : "null");
+            }
+        } catch (Exception e) {
+            log.warn("Ошибка при проверке отпечатка: {}", e.getMessage());
+        }
+        return false;
+    }
+
     // CMD_REFRESHDATA (Not Verified)
     public ZKCommandReply RefreshData() throws IOException, ParseException {
         int[] toSend = ZKCommand.getPacket(CommandCodeEnum.CMD_REFRESHDATA, sessionId, replyNo, null);
@@ -2370,17 +2757,38 @@ public class ZKTerminal {
     // Read response
     public int[] readResponse() throws IOException {
         byte[] buf = new byte[1000000];
-
         DatagramPacket packet = new DatagramPacket(buf, buf.length);
-        socket.receive(packet);
-
+        this.socket.receive(packet);
         int[] response = new int[packet.getLength()];
 
-        for (int i = 0; i < response.length; i++) {
-            response[i] = buf[i] & 0xFF;
+        for (int i = 0; i < response.length; ++i) {
+            response[i] = buf[i] & 255;
         }
 
         return response;
     }
 
+    /**
+     * Получение шаблона отпечатка пальца пользователя (GetUserTmpExStr).
+     * Согласно протоколу ZKTeco, этот метод используется для получения
+     * шаблона отпечатка пальца пользователя.
+     *
+     * @param userUid     ID пользователя в устройстве
+     * @param fingerIndex индекс пальца (0–9)
+     * @return ответ устройства с шаблоном отпечатка пальца
+     * @throws IOException при ошибке ввода-вывода
+     */
+    public ZKCommandReply getUserTmpExStr(int userUid, int fingerIndex) throws IOException {
+        // 1. Получаем userSn по userId
+
+        // 2. Формируем запрос согласно протоколу
+        // payload: [user_sn(2LE)][fp_index(1)][reserved(1)]
+        ByteBuffer buf = ByteBuffer.allocate(4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putShort((short) userUid)  // user_sn (2 bytes, little-endian)
+                .put((byte) fingerIndex)   // fp_index (1 byte)
+                .put((byte) 0);            // reserved (1 byte)
+
+        return sendSimpleCommand(CommandCodeEnum.CMD_USERTEMP_RRQ, buf.array());
+    }
 }

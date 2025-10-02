@@ -1,286 +1,53 @@
 package com.zkteco.terminal;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.text.ParseException;
-import java.util.List;
-
-import com.zkteco.Enum.OnOffenum;
-import com.zkteco.command.events.EventCode;
-import com.zkteco.commands.AttendanceRecord;
-import com.zkteco.commands.SmsInfo;
 import com.zkteco.commands.UserInfo;
 import com.zkteco.commands.ZKCommandReply;
-import com.zkteco.iclockhelper.ZKTecoHttpServer;
-import com.zkteco.utils.HexUtils;
 
-//import java.io.IOException;
-//import java.util.Calendar;
-//import java.util.List;
-//
-//import com.zkteco.command.events.EventCode;
-//import com.zkteco.commands.AttendanceRecord;
-//import com.zkteco.commands.SmsInfo;
-//import com.zkteco.commands.UserInfo;
-//import com.zkteco.commands.UserRole;
-//import com.zkteco.commands.ZKCommandReply;
-//import com.zkteco.utils.HexUtils;
+import java.util.Base64;
+import java.util.List;
+
+import static com.zkteco.enums.UserRoleEnum.USER_DEFAULT;
+
 
 public class Test {
-	
+
+    private static final ZKTerminal zkTerminal = new ZKTerminal("172.23.16.61", 4370);
+
+    public static String f1 = "SslTUzIxAAADiogECAUHCc7QAAAvi4ABAAAAg7cfnIoJASQPhQDbATCFhwDkABkOrgAIi1QJYgAYAY8PZ4rrAO4MiwCQAUKFdQBXAU4PfQBkiy4P8gBjAWsP+4qjAB4PhADGASaDtAAcAaMPtwAciz0PwwDvAO8PforUAAkPaQAaAGGEWwDWAPEOHwDKiiQPDAEUAWkOAotYAbIOgwA3AHmDeAD9AAkJCAAOi6sPjwA7Af0PoIrLABkPzAD/ASyFkQC2AIIPQgBri0YO3QCkAOQPHYooAUYP5QO7gMF7zPkNE4L8dKASmrwThQwNTZgZEn5IEBZBZI+E/rJtiP299gUL9A5SgBMa4/DT6OIAvnd2glOD4f96+Lx98R8ZrNHTDPt9Cgd21fRBCTzpiQq/Cy4HofAgqrEacXe1cA1aYJC+jI/pIgWy//IIWI0e/0N/OQWih5SB0GBlcEVUSedWGti1QQuKgN9/knH/BKruCZsPAt2Y+44Wh6cA5GtV80poAQnZ+sYQXo2n/csLM//q8zSFOSwfZSAuxAH3l2YKAINbBpP//XVbDQB7YwYFWP3I/FsFAHNlv2kRiiiK6UBHQPhLwp0BF6bgMEf7wP51RsD///89zQDjLCFYPAMA+WMiwpkBjraGkYtBa2n5HQAMw9b+hT38tzTA//79doFBBYqdyoySww7FpMia//7/wD7B/cIEitrNJlhKBMWk05D+/w8AgNbMMzXNwf5wCwBdHPTDdfz9//7+WsgAVlFhfG9cVBDFb92KL/8ywEL/qw0D7d5wncLAfqEeA4nk1kc4OP87OEN1/8DBNzf9zACLbBH9Pv5XCMVo73r6+/9MCwCl7mFLw4RywAsADfAlzk6LCwDC8eP/Wbx2DQCD8oYDwZH0w2ULAIn52f5Az08KAHP7aUhyfIARhwIe/jePwQqahQYmRP9SzBCigyjAwv3AReQQAobNwP/+wEaEQTDFRP/+U8D+BP4LmmgMXsKQcMIQfpM2wP9BBhCnGkrgwCEQAx/PlsD8tDo7/j7//+rBQHXBOAYQcCGFSv2MEXYhNz7A2hAjrs1GwED//jj/w3f+/v/+wP4EwP1L/v/A/sP+wBAZpkhWBxAhLINZ/U8EENA6LVLmEAaxyEL+wf/AO/9Fd/7+/v84ODtdUHRmBBDLPTGeBBMHPz1wBBCT+zdYmxFfZ8zCWwX++nj+OMA+";
+
+    public static String f2 = "StNTUzIxAAADkJIECAUHCc7QAAAvkYABAAAAg70dy5DhABAP4QDmASSdaQAiAWgPLgAQkY4N7gA1AW0O0pBdATEP8gB5AI2fLQAwAVgPIACIkA8PqwBtADoP4ZAVARQNnwCNARefYAANAXAPTADBkAEPywC3AMgPeZBgAVcPCAGLATOfRgBiAdcP1gGkkI8LFwBdAZQPapAFAfoP0gAeAIifegBCAWUPJAA6kZ4OUADlADEP+ZBNATEPLQA0AGufGAHBABQO1AAtkVgPXIc2BpKGHoQwmZmKzfofcEWVbX5JaS7piAiCEgR7IpZCA+6I3ZJ7gvp+rQO+CVQSqoHLAYuCUvOwZ9IDaIax7Ftt9SHXv3/m7HuACsHv6g9795fza4V5Erv+7vQSR26B1pDzieaTL4hugVQSKH9eAouCLvg07AL55I/KlOsKZ++vgdb/XhDnUcVt1Pihev5wx42xbr+HVQD9iy+UDeUu+ydzJYs3igybLANjCPvzoVACnSEyAQISIHEFAz5NesIqAwATTYNSEADyVX1Wn8D84GXBAwAefKX9FZEOa4lmhcGQaVFuwl0IAK5txVdHlQHpjg9gFsQKhxxda8BwaVqdwhSRG5aQaWh4vVpyb2QXAQ+mkAXA/FRTwIT/XGoFbACQz7UJ/xAAA7aKFGNwwGLCFMXxuwPC/3hv/sIEYlpRCADOuxDAlv8/iQAru5Z2wAXC/FP+cntwwMC3FwKDv5BSgcDBosBxUcFawgUA93oTSZ8BjcMAwEA6VcOv/A0A09uJt8Fx58EJAMPgibV2wpoBy+AMQESPCgNb5xdd/sBTwAAof2yEGgAA9CzAPs3BQzj+N8HzQgWQLfVmacMb1QAHSinB/Xv+/zrAV27/wcD/REbKEG+U+0T/MDj9vQwTzwt0jP+Lb8sQZJz8VE/+//0FVgmAYRFtwI3AoxYTeROWdHd+VgFywswLEOQWGv87W0OeEW0g9/8+7UsymBFlIXGScMIQZLZqwsGDAxDULlVQBhArMFdkpR0TkDPW//9MK4FHMFDAK8DAwDHREOOoo8GIb3V1BmLCjxEAPtf+U4Q/VK4zL0rA/v0FBRPoRWaABRCgjRD9tAIQ/E4p/cgQzMilwcORwv8Gw26AEUhh0zMp9DFDlhF+atr8+z/9AICoapfHExAoarMUwv/CwZPBB8N2UwoQY2fa/+n/J24JELxopsMHxMAJ";
+
     public static void main(String[] args) throws Exception {
-      ZKTerminal terminal = new ZKTerminal("192.168.1.205", 4370);
-      ZKCommandReply reply = terminal.connect();
-      reply = terminal.connectAuth(100);
-      reply = terminal.disableDevice();
+        try {
+            ZKCommandReply reply = zkTerminal.connect();
 
-      System.out.println(reply.getCode());
-      
-      terminal.createBackup(); 
-      
-      System.out.println(reply.getCode());
+            zkTerminal.connectAuth(0).getCode();
 
+            List<UserInfo> users = zkTerminal.getAllUsers();
 
-    
-
-//    SmsInfo smsinfo = terminal.getYourSmsList(3);
-
-//    reply = terminal.setSms(253,1024,7680,System.currentTimeMillis(),"Dhana Test");
-
-//      
-//      try {
-//          SmsInfo smsinfo = terminal.getYourSmsList(1);
-//          
-//	    System.out.println("tag: " + smsinfo.getTag()); // 253 public , 254 private , 255 draft
-//	    System.out.println("ID: " + smsinfo.getId()); // 1  - 256 2 - 512 3 - 768 (id * 256)
-//	    System.out.println("validMinutes: " + smsinfo.getValidMinutes()); // (min * 256)
-//	    System.out.println("reserved: " + smsinfo.getReserved());
-//	    System.out.println("startTime: " + smsinfo.getStartTime());
-//	    System.out.println("content: " + smsinfo.getContent());
-//    	    System.out.println("------------------------");
-//    	  } catch (IOException e) {
-//    	      e.printStackTrace(); // Handle exceptions appropriately
-//    	  }  
-//        
-        //
-//                try {
-//                    List<UserInfo> userList = terminal.getAllUsers();
-//        
-//                    // Access and print user information
-//                    for (UserInfo user : userList) {
-//        	              System.out.println("User ID: " + user.getUserid());
-//        	              System.out.println("Name: " + user.getName());
-//        	              System.out.println("Password: " + user.getPassword());
-//        	              System.out.println("Card Number: " + user.getCardno());
-//        	              System.out.println("Group Number: " + user.getGroupNumber());
-//        	              System.out.println("User TimeZone Flag: " + user.getUserTimeZoneFlag());
-//        	              System.out.println("TimeZone1: " + user.getTimeZone1()); 
-//        	              System.out.println("TimeZone2: " + user.getTimeZone2());
-//        	              System.out.println("TimeZone3: " + user.getTimeZone3());
-//        	              System.out.println("User Serial Number: " + user.getUid());
-//        	              System.out.println("Role: " + user.getRole());
-//                          System.out.println("------------------------");
-//                    }
-//                } catch (IOException e) {
-//                    e.printStackTrace(); // Handle exceptions appropriately
-//                }              
-//                
-      
-//      try {
-//          List<AttendanceRecord> attendanceRecord = terminal.getAttendanceRecordsForDateRange("2024-02-21 00:00:00", "2024-02-21 23:59:00");
-//          
-//        // Access and print user information
-//        for (AttendanceRecord attendance : attendanceRecord) {
-//              System.out.println("User ID: " + attendance.getUserID());
-//              System.out.println("User SN: " + attendance.getUserSN());            
-//              System.out.println("Verify State: " + attendance.getVerifyState());
-//              System.out.println("Verify Type: " + attendance.getVerifyType());
-//              System.out.println("Record Time: " + attendance.getRecordTime());
-//              System.out.println("------------------------");
-//        }
-//    } catch (IOException e) {
-//        e.printStackTrace(); // Handle exceptions appropriately
-//    }   
-      
-//        ZKTecoHttpServer xk =new ZKTecoHttpServer(8000);
-//        
-//        terminal.getYourSmsList(01);	
-//      try {
-//      List<SmsInfo> SmsInfo = terminal.getYourSmsList(01);
+            System.out.println(users.size());
+            //    zkTerminal.getUserTmpExStr(5000, 0);
+        //    //    zkTerminal.resetDevice();
 //
-//      // Access and print user information
-//      for (SmsInfo smsinfo : SmsInfo) {
-//            System.out.println("tag: " + smsinfo.getTag());
-//            System.out.println("ID: " + smsinfo.getID());
-//            System.out.println("validMinutes: " + smsinfo.getID());
-//            System.out.println("reserved: " + smsinfo.getReserved());
-//            System.out.println("startTime: " + smsinfo.getStartTime());
-//            System.out.println("content: " + smsinfo.getContent());
-//            System.out.println("------------------------");
-//      }
-//  } catch (IOException e) {
-//      e.printStackTrace(); // Handle exceptions appropriately
-//  }              
-//        
-//        reply = terminal.delSMS(01);
-
-//      System.out.println(reply.getCode());
-//      reply = terminal.enableDevice();
+        //    UserInfo newUserInfo = new UserInfo(5000, "6000", "КостенкоТ", "", USER_DEFAULT, 0);
 //
-//      reply = terminal.enableRealtime(EventCode.EF_FINGER);//enableDevice();
-
-//      System.out.println(terminal.getCommKey());
-//      
-//      reply = terminal.setCommKey(0);
-
-
-//      while (true) {
-//          int[] response = terminal.readResponse();
-//          
-//          System.out.println(HexUtils.bytesToHex(response));
-//      }
-      
-        
-        
-//        reply = terminal.syncTime();
-//      reply = terminal.FreeDeviceBuffer();
-//        reply = terminal.RefreshData();
-
-        // Update
-//        UserInfo user  = new UserInfo(83,"83", "Gokul G", "6567", UserRole.USER_DEFAULT, 2111);
-//        reply = terminal.modifyUserInfo(user);
-
-//        System.out.println(reply.getCode());
-
-//        reply = terminal.enableDevice();
-//        System.out.println(reply.getCode());
-
-//        reply = terminal.Poweroff();
-//    System.out.println(terminal.isVoiceOn());
-
-//      reply = terminal.ClearAdminData();       
-//      reply = terminal.enableDevice();
-
-//      reply = terminal.FreeDeviceBuffer();
-//        reply = terminal.RefreshData();
-//        reply = terminal.Poweroff();
-//        reply = terminal.delUser(80);
-//        reply = terminal.setUserGroup(9,1);
-        
-//      System.out.println(terminal.getDeviceIP());
-//      reply = terminal.setIPAddress("192.168.1.201");
-
-//      System.out.println(terminal.getDeviceName());
-//        System.out.println("free : " + terminal.getDeviceStatus().get("userCapacity"));
-//        System.out.println("free : " + terminal.getDeviceStatus().get("faceCount"));
-//      System.out.println("free : " + terminal.getDeviceStatus().get("userCount"));
-
-//      System.out.println(reply.getCode());        
-//      System.out.println("getDeviceTime : " + terminal.getDeviceTime());
-//      System.out.println("getDeviceName :  " + terminal.getDeviceName());
-//      System.out.println("getSerialNumber : " + terminal.getSerialNumber());
-//      System.out.println("getMAC : " + terminal.getMAC());
-//      System.out.println("getFaceVersion : " + terminal.getFaceVersion());
-//      System.out.println("getPlatform : " + terminal.getPlatform());
-//      System.out.println("getWorkCode : " + terminal.getWorkCode());
-//      System.out.println("getFPVersion : " + terminal.getFPVersion());
-//      System.out.println("getOEMVendor : " + terminal.getOEMVendor());
-
-//        reply = terminal.disableDevice();
-//        reply = terminal.triggerAlarm();
-
-//        reply = terminal.setDeviceSms(new Date(),1000,"This is Test");
-//        reply = terminal.syncTime();
-
-//        System.out.println(reply.getCode());        
-//        reply = terminal.testVoice(0);
-
-        //        reply = terminal.ClearAdminData();
-        //      reply = terminal.ClearAttLogData();
-
-        //        reply = terminal.DeviceFree();
-//        reply = terminal.enableRealtime();
-//        System.out.println(reply.getCode());
-        
-//        System.out.println(reply.getCode());
-//        Thread.sleep(5*1000);        
-//        reply = terminal.WriteSMS(0,"Hi");
-//        reply = terminal.getAttendanceRecords();
-//        System.out.println(terminal.getDeviceTime());
-//        reply = terminal.Poweroff();
-//        reply = terminal.Sleep();
-//        System.out.println(reply.getCode());
-//        reply = terminal.disableDevice();
-//        System.out.println(reply.getCode());
-//        terminal.getDeviceTime();
-//        reply = terminal.enableDevice();
-//        System.out.println(reply.getCode()); 
-//        reply = terminal.enableRealtime(EventCode.EF_FINGER);//enableDevice();
-        
-//        System.out.println(reply.getCode());
-        
-//        System.out.println("Reading");
-        
-        //restart work
-//        reply = terminal.restart();
-//        System.out.println("Restart : " +  reply.getCode() );
-        
-//        while (true) {
-//            int[] response = terminal.readResponse();
-//            
-//            System.out.println(HexUtils.bytesToHex(response));
-//        }
-        
+        //    ZKCommandReply createReply = zkTerminal.modifyUserInfo(newUserInfo);
 //
-//        try {
-//            List<UserInfo> userList = terminal.getAllUsers();
+        //    System.out.println(createReply);
 //
-//            // Access and print user information
-//            for (UserInfo user : userList) {
-//	              System.out.println("User ID: " + user.getUserid());
-//	              System.out.println("Name: " + user.getName());
-//	              System.out.println("Password: " + user.getPassword());
-//	              System.out.println("Card Number: " + user.getCardno());
-//	              System.out.println("Group Number: " + user.getGroupNumber());
-//	              System.out.println("User TimeZone Flag: " + user.getUserTimeZoneFlag());
-//	              System.out.println("TimeZone1: " + user.getTimeZone1()); 
-//	              System.out.println("TimeZone2: " + user.getTimeZone2());
-//	              System.out.println("TimeZone3: " + user.getTimeZone3());
-//	              System.out.println("User Serial Number: " + user.getUid());
-//	              System.out.println("Role: " + user.getRole());
-//                  System.out.println("------------------------");
-//            }
-//        } catch (IOException e) {
-//            e.printStackTrace(); // Handle exceptions appropriately
-//        }              
-//        
-//        try {
-//            List<AttendanceRecord> attendanceRecord = terminal.getAttendanceRecords();
+        //    byte[] base64Bytes1 = Base64.getDecoder().decode(f1);
+        //    zkTerminal.uploadFp(newUserInfo.getUid(), base64Bytes1, (byte) 0, (byte) 1);
+        //    //zkTerminal.uploadAndVerifyFingerprint(newUserInfo, base64Bytes1, (byte) 0);
 //
-//            // Access and print user information
-//            for (AttendanceRecord attendance : attendanceRecord) {
-//                  System.out.println("User ID: " + attendance.getUserID());
-//                  System.out.println("User SN: " + attendance.getUserSN());            
-//                  System.out.println("Verify State: " + attendance.getVerifyState());
-//                  System.out.println("Verify Type: " + attendance.getVerifyType());
-//                  System.out.println("Record Time: " + attendance.getRecordTime());
-//                  System.out.println("------------------------");
-//            }
-//        } catch (IOException e) {
-//            e.printStackTrace(); // Handle exceptions appropriately
-//        }              
+        //    byte[] base64Bytes2 = Base64.getDecoder().decode(f2);
+        //    zkTerminal.uploadFp(newUserInfo.getUid(), base64Bytes2, (byte) 1, (byte) 1);
+        //    //zkTerminal.uploadAndVerifyFingerprint(newUserInfo, base64Bytes1, (byte) 1);
 //
-        //terminal.disconnect();
-        
-        /*terminal.disconnect();
-        
-        ZKCommandReply reply = terminal.getAttendanceRecords();
-        
-        System.out.println(reply.getCode());*/
-
-        /*if (reply.getCode() == CommandReplyCode.CMD_ACK_UNAUTH) {
-            reply = terminal.connectAuth(155);
-        }*/
+        //    zkTerminal.saveData();
+        } finally {
+            zkTerminal.disconnect();
+        }
 
     }
+
 }
