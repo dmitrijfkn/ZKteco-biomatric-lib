@@ -20,11 +20,13 @@ import com.zkteco.utils.SecurityUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
@@ -47,6 +49,8 @@ public class ZKTerminal {
 
     private static final int MAX_RETRIES = 3;           // how many attempts per finger
     private static final long INITIAL_BACKOFF_MS = 500; // backoff grows 0.5s -> 1s -> 2s
+    /** Stray UDP packets to ignore before failing (wrong host/port). */
+    private static final int MAX_STRAY_UDP_PACKETS = 64;
 
     private final String ip;
     private final int port;
@@ -55,9 +59,30 @@ public class ZKTerminal {
     private int sessionId;
     private int replyNo;
 
+    /**
+     * When {@code false} (default), each {@code CMD_DATA} chunk in {@link #getAttendanceRecords()} is checksum-verified
+     * until the first mismatch; after that, verification is skipped for the rest of that single call only (so swapped
+     * terminals need no config). When {@code true}, checksum is never verified on attendance {@code CMD_DATA} chunks
+     * (maximum compatibility, slightly weaker integrity signal).
+     */
+    private boolean lenientAttendanceDataChecksum = false;
+
     public ZKTerminal(String ip, int port) {
         this.ip = ip;
         this.port = port;
+    }
+
+    /**
+     * When {@code true}, attendance {@code CMD_DATA} chunks never undergo checksum verification (from the first packet).
+     * Default {@code false} uses automatic downgrade: verify until the first mismatch, then skip for the rest of that
+     * {@link #getAttendanceRecords()} call only.
+     */
+    public void setLenientAttendanceDataChecksum(boolean lenientAttendanceDataChecksum) {
+        this.lenientAttendanceDataChecksum = lenientAttendanceDataChecksum;
+    }
+
+    public boolean isLenientAttendanceDataChecksum() {
+        return lenientAttendanceDataChecksum;
     }
 
     // Connect to devices
@@ -426,31 +451,146 @@ public class ZKTerminal {
         socket.send(packet);
         replyNo++;
         int[] response = readResponse();
+        if (!SecurityUtils.verifyZkPacketChecksum(response)) {
+            throw new IOException("ZK attendance: checksum mismatch on first reply from " + address.getHostAddress());
+        }
         CommandReplyCodeEnum replyCode = CommandReplyCodeEnum.decode(response[0] + (response[1] * 0x100));
         List<AttendanceRecord> attendanceRecords = new ArrayList<>();
-        StringBuilder attendanceBuffer = new StringBuilder();
 
+        ByteArrayOutputStream rawBody = new ByteArrayOutputStream();
+        /** True when we assembled the multi-packet payload after CMD_PREPARE_DATA (includes 4-byte att_size prefix). */
+        boolean assembledWithPrepareBulk = false;
         if (replyCode == CommandReplyCodeEnum.CMD_PREPARE_DATA) {
-            boolean first = true;
-
-            int lastDataRead;
-
-            do {
-                int[] readData = readResponse();
-
-                lastDataRead = readData.length;
-
-                String readPacket = HexUtils.bytesToHex(readData);
-
-                attendanceBuffer.append(readPacket.substring(first ? 24 : 16));
-
-                first = false;
-            } while (lastDataRead == 1032);
+            if (response.length < 8 + 8) {
+                throw new IOException("ZK attendance: CMD_PREPARE_DATA payload too short (" + response.length + " bytes)");
+            }
+            int sizeDataset = response[8] | (response[9] << 8) | (response[10] << 16) | (response[11] << 24);
+            int prepMagic = response[12] | (response[13] << 8) | (response[14] << 16) | (response[15] << 24);
+            if (prepMagic != 0x00000010) {
+                log.warn("ZK attendance: PREPARE_DATA magic was {}, expected 0x00000010 (continuing), for IP: {}", String.format("0x%08X", prepMagic), this.ip);
+            }
+            if (sizeDataset < 0) {
+                throw new IOException("ZK attendance: invalid sizeDataset " + sizeDataset + ", for IP: " + this.ip);
+            }
+            if (sizeDataset == 0) {
+                drainAttendanceTrailingAck();
+            } else {
+                assembledWithPrepareBulk = true;
+                boolean bulkEndedWithAck = false;
+                boolean skipAttendanceDataChecksum = lenientAttendanceDataChecksum;
+                while (true) {
+                    if (rawBody.size() >= sizeDataset) {
+                        break;
+                    }
+                    int[] readData = readResponse();
+                    if (!skipAttendanceDataChecksum) {
+                        if (!SecurityUtils.verifyZkPacketChecksum(readData)) {
+                            log.warn(
+                                    "ZK attendance: checksum mismatch on DATA chunk from {} ({} bytes); "
+                                            + "skipping checksum verification for the rest of this getAttendanceRecords() call only. "
+                                            + "Set lenientAttendanceDataChecksum to skip from the first chunk.",
+                                    address.getHostAddress(), readData.length);
+                            skipAttendanceDataChecksum = true;
+                        }
+                    }
+                    CommandReplyCodeEnum dataCode = CommandReplyCodeEnum.decode(readData[0] + (readData[1] * 0x100));
+                    if (dataCode == CommandReplyCodeEnum.CMD_ACK_OK) {
+                        // Same behaviour as pyzk __recieve_chunk (UDP): transfer may end with ACK without another DATA frame.
+                        bulkEndedWithAck = true;
+                        break;
+                    }
+                    if (dataCode != CommandReplyCodeEnum.CMD_DATA) {
+                        throw new IOException("ZK attendance: expected CMD_DATA or CMD_ACK_OK, got " + dataCode);
+                    }
+                    final int headerSkip = 8;
+                    if (readData.length <= headerSkip) {
+                        throw new IOException("ZK attendance: DATA chunk too short (" + readData.length + " bytes)");
+                    }
+                    int want = sizeDataset - rawBody.size();
+                    int avail = readData.length - headerSkip;
+                    int n = Math.min(want, avail);
+                    for (int i = 0; i < n; i++) {
+                        rawBody.write(readData[headerSkip + i]);
+                    }
+                }
+                if (bulkEndedWithAck && rawBody.size() < sizeDataset) {
+                    log.warn("ZK attendance: CMD_ACK_OK with partial payload: got {} of {} bytes (continuing with received data)",
+                            rawBody.size(), sizeDataset);
+                }
+                if (!bulkEndedWithAck) {
+                    // Bulk transfer normally ends with CMD_ACK_OK after the last DATA; consume it for the next command.
+                    int[] after = readResponse();
+                    if (!SecurityUtils.verifyZkPacketChecksum(after)) {
+                        log.warn("ZK attendance: checksum mismatch on post-transfer packet (ignored for drain)");
+                    }
+                    CommandReplyCodeEnum afterCode = CommandReplyCodeEnum.decode(after[0] + (after[1] * 0x100));
+                    if (afterCode != CommandReplyCodeEnum.CMD_ACK_OK) {
+                        log.warn("ZK attendance: after bulk transfer expected CMD_ACK_OK, got {}", afterCode);
+                    }
+                }
+            }
+        } else if (replyCode == CommandReplyCodeEnum.CMD_DATA) {
+            if (response.length < 12) {
+                throw new IOException("ZK attendance: single CMD_DATA reply too short");
+            }
+            for (int i = 12; i < response.length; i++) {
+                rawBody.write(response[i]);
+            }
+            drainAttendanceTrailingAck();
         } else {
-            attendanceBuffer.append(HexUtils.bytesToHex(response).substring(24));
+            throw new IOException("ZK attendance: unexpected first reply " + replyCode);
         }
 
-        String attendance = attendanceBuffer.toString();
+        byte[] full = rawBody.toByteArray();
+        if (full.length == 0) {
+            return attendanceRecords;
+        }
+
+        String attendance;
+        if (assembledWithPrepareBulk) {
+            if (full.length < 4) {
+                throw new IOException("ZK attendance: bulk payload shorter than att_size field (" + full.length + " bytes)");
+            }
+            int declaredAttSize = ByteBuffer.wrap(full).order(ByteOrder.LITTLE_ENDIAN).getInt(0);
+            if (declaredAttSize == 0) {
+                return attendanceRecords;
+            }
+            int recordBytesAvailable = full.length - 4;
+            if (recordBytesAvailable <= 0) {
+                throw new IOException("ZK attendance: no record bytes after att_size header");
+            }
+
+            int effectiveAttSize;
+            if (declaredAttSize < 0 || (declaredAttSize % 40) != 0) {
+                log.warn("ZK attendance: non-standard att_size {} (not a non-negative multiple of 40); deriving length from buffer",
+                        declaredAttSize);
+                effectiveAttSize = (recordBytesAvailable / 40) * 40;
+                if (effectiveAttSize <= 0) {
+                    throw new IOException("ZK attendance: cannot derive record block from buffer length " + full.length);
+                }
+            } else if (recordBytesAvailable >= declaredAttSize) {
+                effectiveAttSize = declaredAttSize;
+                if (recordBytesAvailable > declaredAttSize) {
+                    log.warn("ZK attendance: trailing padding {} bytes (att_size={})", recordBytesAvailable - declaredAttSize, declaredAttSize);
+                }
+            } else {
+                effectiveAttSize = (recordBytesAvailable / 40) * 40;
+                if (effectiveAttSize <= 0) {
+                    throw new IOException("ZK attendance: truncated payload (" + full.length + " bytes total) — not even one full 40-byte record");
+                }
+                log.warn(
+                        "ZK attendance: device declared att_size={} ({} record bytes) but only {} bytes received after header; "
+                                + "parsing {} complete records ({} bytes). Some events may be missing (firmware/network).",
+                        declaredAttSize, declaredAttSize, recordBytesAvailable, effectiveAttSize / 40, effectiveAttSize);
+            }
+
+            attendance = HexUtils.byteArrayToHex(Arrays.copyOfRange(full, 4, 4 + effectiveAttSize));
+        } else {
+            if ((full.length % 40) != 0) {
+                throw new IOException("ZK attendance: single-packet body length " + full.length + " is not a multiple of 40");
+            }
+            attendance = HexUtils.byteArrayToHex(full);
+        }
 
         while (attendance.length() >= 80) {
             String record = attendance.substring(0, 80);
@@ -472,7 +612,7 @@ public class ZKTerminal {
             record = record.substring(48);
 
             int method = Integer.valueOf(record.substring(0, 2), 16);
-            AttendanceTypeEnum attendanceType = method < AttendanceTypeEnum.values().length
+            AttendanceTypeEnum attendanceType = method >= 0 && method < AttendanceTypeEnum.values().length
                     ? AttendanceTypeEnum.values()[method]
                     : AttendanceTypeEnum.UNKNOWN;
 
@@ -488,7 +628,9 @@ public class ZKTerminal {
             record = record.substring(8);
 
             int operation = Integer.valueOf(record.substring(0, 2), 16);
-            AttendanceStateEnum attendanceState = AttendanceStateEnum.values()[operation];
+            AttendanceStateEnum attendanceState = operation >= 0 && operation < AttendanceStateEnum.values().length
+                    ? AttendanceStateEnum.values()[operation]
+                    : AttendanceStateEnum.CHECK_IN;
 
             attendance = attendance.substring(80);
             AttendanceRecord attendanceRecord = new AttendanceRecord(seq, userId.trim(), attendanceType, attendanceDate, attendanceState);
@@ -2758,14 +2900,45 @@ public class ZKTerminal {
     public int[] readResponse() throws IOException {
         byte[] buf = new byte[1000000];
         DatagramPacket packet = new DatagramPacket(buf, buf.length);
-        this.socket.receive(packet);
-        int[] response = new int[packet.getLength()];
-
-        for (int i = 0; i < response.length; ++i) {
-            response[i] = buf[i] & 255;
+        int stray = 0;
+        while (true) {
+            this.socket.receive(packet);
+            if (packet.getPort() == port && address.equals(packet.getAddress())) {
+                int[] response = new int[packet.getLength()];
+                for (int i = 0; i < response.length; ++i) {
+                    response[i] = buf[i] & 255;
+                }
+                return response;
+            }
+            if (++stray > MAX_STRAY_UDP_PACKETS) {
+                throw new IOException("Too many stray UDP packets (not from " + address.getHostAddress() + ":" + port + ")");
+            }
+            log.warn("Ignoring UDP from {}:{} (expected {}:{})",
+                    packet.getAddress().getHostAddress(), packet.getPort(), address.getHostAddress(), port);
         }
+    }
 
-        return response;
+    /**
+     * After a one-shot {@link CommandReplyCodeEnum#CMD_DATA} reply the device may still send
+     * {@link CommandReplyCodeEnum#CMD_ACK_OK}; if it stays in the socket buffer it corrupts the next transaction.
+     * Best-effort drain with a short timeout.
+     */
+    private void drainAttendanceTrailingAck() throws IOException {
+        int prev = socket.getSoTimeout();
+        try {
+            socket.setSoTimeout(250);
+            try {
+                int[] after = readResponse();
+                CommandReplyCodeEnum afterCode = CommandReplyCodeEnum.decode(after[0] + (after[1] * 0x100));
+                if (afterCode != CommandReplyCodeEnum.CMD_ACK_OK) {
+                    log.warn("ZK attendance: optional drain got {} instead of CMD_ACK_OK", afterCode);
+                }
+            } catch (SocketTimeoutException ignored) {
+                // No trailing ACK within the short window — normal for some firmware paths.
+            }
+        } finally {
+            socket.setSoTimeout(prev);
+        }
     }
 
     /**

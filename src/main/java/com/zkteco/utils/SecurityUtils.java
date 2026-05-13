@@ -8,6 +8,28 @@ import org.apache.commons.lang3.StringUtils;
 
 public class SecurityUtils {
 
+    /**
+     * Verifies the 16-bit checksum in bytes {@code [2],[3]} (little-endian) of a ZK UDP reply.
+     * The checksum is computed over command (2) + session (2) + reply (2) + payload, same as
+     * {@link com.zkteco.commands.ZKCommand#getPacket}.
+     */
+    public static boolean verifyZkPacketChecksum(int[] response) {
+        if (response == null || response.length < 8) {
+            return false;
+        }
+        int[] forChecksum = new int[6 + (response.length - 8)];
+        forChecksum[0] = response[0];
+        forChecksum[1] = response[1];
+        forChecksum[2] = response[4];
+        forChecksum[3] = response[5];
+        forChecksum[4] = response[6];
+        forChecksum[5] = response[7];
+        System.arraycopy(response, 8, forChecksum, 6, response.length - 8);
+        int expected = calculateChecksum(forChecksum);
+        int actual = response[2] | (response[3] << 8);
+        return (expected & 0xffff) == (actual & 0xffff);
+    }
+
     public static int calculateChecksum(int[] inputPayload) {
         int[] payload;
         int chk32b = 0;
